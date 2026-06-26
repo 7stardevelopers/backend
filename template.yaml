@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 7StarExperts API Backend
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 30
+    MemorySize: 512
+    Environment:
+      Variables:
+        SECRET_NAME: !Ref SecretName
+        AWS_REGION_NAME: ap-south-1
+        ENVIRONMENT: !Ref Environment
+        S3_DOCUMENTS_BUCKET: !Sub "7starexperts-documents-${Environment}"
+        S3_MEDIA_BUCKET: !Sub "7starexperts-media-${Environment}"
+        CLOUDFRONT_URL: !Ref CloudFrontURL
+
+Parameters:
+  Environment:
+    Type: String
+    Default: staging
+    AllowedValues: [staging, production]
+  SecretName:
+    Type: String
+    Default: 7starexperts/staging/secrets
+  CloudFrontURL:
+    Type: String
+    Default: https://cdn.7starexperts.com
+  VpcSecurityGroupId:
+    Type: String
+    Default: ""
+  VpcSubnetId1:
+    Type: String
+    Default: ""
+  VpcSubnetId2:
+    Type: String
+    Default: ""
+
+Resources:
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "7starexperts-api-${Environment}"
+      Handler: lambda_function.handler
+      CodeUri: .
+      Description: 7StarExperts main API handler
+      Events:
+        RestApi:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+        OptionsApi:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: OPTIONS
+      Policies:
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Sub "arn:aws:secretsmanager:ap-south-1:${AWS::AccountId}:secret:${SecretName}"
+        - S3CrudPolicy:
+            BucketName: !Sub "7starexperts-documents-${Environment}"
+        - S3CrudPolicy:
+            BucketName: !Sub "7starexperts-media-${Environment}"
+        - Statement:
+          - Effect: Allow
+            Action:
+              - execute-api:ManageConnections
+            Resource: "*"
+
+  LocationTriggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "7starexperts-location-trigger-${Environment}"
+      Handler: location_trigger.handler
+      CodeUri: .
+      Description: Fires push notifications 1 hour before scheduled bookings
+      Events:
+        ScheduleRule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(15 minutes)
+            Enabled: true
+      Policies:
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Sub "arn:aws:secretsmanager:ap-south-1:${AWS::AccountId}:secret:${SecretName}"
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.ap-south-1.amazonaws.com/Prod/"
