@@ -4,7 +4,7 @@ version = 0.1
 stack_name = "7starexperts-api"
 
 [staging.deploy.parameters]
-stack_name        = "7starexperts-api-staging"
+stack_name        = "sevenstar-api-staging"
 s3_bucket         = "7starexperts-sam-staging"
 s3_prefix         = "7starexperts-api"
 region            = "ap-south-1"
@@ -16,7 +16,7 @@ parameter_overrides = [
 ]
 
 [production.deploy.parameters]
-stack_name        = "7starexperts-api-production"
+stack_name        = "sevenstar-api-production"
 s3_bucket         = "7starexperts-sam-production"
 s3_prefix         = "7starexperts-api"
 region            = "ap-south-1"

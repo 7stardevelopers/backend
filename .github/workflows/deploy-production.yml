@@ -44,6 +44,6 @@ jobs:
       - name: Print API URL
         run: |
           aws cloudformation describe-stacks \
-            --stack-name 7starexperts-api-production \
+            --stack-name sevenstar-api-production \
             --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
             --output text
