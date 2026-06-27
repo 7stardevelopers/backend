@@ -30,7 +30,8 @@ jobs:
 
       - name: Create SAM S3 bucket if not exists
         run: |
-          aws s3 mb s3://7starexperts-sam-production --region ${{ vars.AWS_REGION }} 2>/dev/null || true
+          aws s3api head-bucket --bucket 7starexperts-sam-production 2>/dev/null \
+            || aws s3 mb s3://7starexperts-sam-production --region ${{ vars.AWS_REGION }}
 
       - name: SAM Build
         run: sam build --config-env production
