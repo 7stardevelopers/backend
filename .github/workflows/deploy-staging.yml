@@ -41,6 +41,14 @@ jobs:
         run: sam deploy --config-env staging --no-fail-on-empty-changeset
         working-directory: .
 
+      - name: Print stack failure events
+        if: failure()
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name sevenstar-api-staging \
+            --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED'].{Resource:LogicalResourceId,Reason:ResourceStatusReason}" \
+            --output table
+
       - name: Print API URL
         run: |
           aws cloudformation describe-stacks \
