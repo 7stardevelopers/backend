@@ -4,7 +4,7 @@ from typing import Optional
 
 class CreateOrderSchema(BaseModel):
     booking_id: str
-    amount: int = Field(..., gt=0)
+    amount: Optional[int] = None  # ignored — service always reads from DB
     currency: str = "INR"
 
 

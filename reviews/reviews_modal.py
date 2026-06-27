@@ -1,11 +1,12 @@
 from sqlalchemy import func, text
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
 class ReviewsMaster:
-    def __init__(self):
-        self.r = metadata.tables["reviews"]
+    @property
+    def r(self):
+        return get_table("reviews")
 
     def create(self, conn, data: dict) -> dict:
         data["review_id"] = new_uuid()

@@ -14,10 +14,10 @@ class WebSocketsService:
         query = event.get("queryStringParameters") or {}
         token = query.get("token", "")
         booking_id = query.get("bookingId")
-        user_id = _extract_user_from_token(token)
+        user_id, role = _extract_user_from_token(token)
         if not user_id:
             return "error", "Unauthorized"
-        self.modal.connect(conn, connection_id, user_id, booking_id)
+        self.modal.connect(conn, connection_id, user_id, booking_id, role)
         return "success", "Connected"
 
     def on_disconnect(self, connection_id: str, event: dict, conn):
@@ -33,7 +33,7 @@ class WebSocketsService:
         svc = MessagesService()
         result = svc.send_message({
             "_user_id": ws_record["user_id"],
-            "_role": "CUSTOMER",
+            "_role": ws_record.get("role"),
             "booking_id": body.get("booking_id") or ws_record.get("booking_id"),
             "text": body.get("text", ""),
             "message_type": body.get("message_type", "text"),
@@ -76,13 +76,13 @@ class WebSocketsService:
 
 def _extract_user_from_token(token: str):
     if not token:
-        return None
+        return None, None
     try:
         secret = os.environ.get("JWT_SECRET", "")
         payload = jwt.decode(token, secret, algorithms=["HS256"])
-        return payload.get("user_id")
+        return payload.get("user_id"), payload.get("role")
     except Exception:
-        return None
+        return None, None
 
 
 def _parse_body(event: dict) -> dict:
@@ -94,10 +94,11 @@ def _parse_body(event: dict) -> dict:
 
 
 def _broadcast_location_to_customer(conn, booking_id: str, lat, lng):
-    from utilities.db_connection import metadata
-    ws_t = metadata.tables.get("ws_connections")
-    bookings_t = metadata.tables.get("bookings")
-    if not ws_t or not bookings_t:
+    from utilities.db_connection import get_table
+    try:
+        ws_t = get_table("ws_connections")
+        bookings_t = get_table("bookings")
+    except KeyError:
         return
     endpoint = os.environ.get("WEBSOCKET_ENDPOINT_URL", "")
     if not endpoint:

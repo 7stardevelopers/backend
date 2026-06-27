@@ -15,7 +15,9 @@ class CouponsService:
         coupon = self.modal.find_by_code(connection, data.coupon_code)
         if not coupon:
             raise ValueError("Invalid coupon code")
-        if coupon["expires_at"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        expires = coupon["expires_at"]
+        expired = (expires < datetime.utcnow()) if expires.tzinfo is None else (expires < datetime.now(timezone.utc))
+        if expired:
             raise ValueError("Coupon has expired")
         if coupon["used_count"] >= coupon["max_uses"]:
             raise ValueError("Coupon usage limit reached")

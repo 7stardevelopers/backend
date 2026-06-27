@@ -1,13 +1,23 @@
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
 class ServicesMaster:
-    def __init__(self):
-        self.cats = metadata.tables["categories"]
-        self.svcs = metadata.tables["services"]
-        self.sub_cats = metadata.tables["sub_categories"]
-        self.sub_svcs = metadata.tables["sub_services"]
+    @property
+    def cats(self):
+        return get_table("categories")
+
+    @property
+    def svcs(self):
+        return get_table("services")
+
+    @property
+    def sub_cats(self):
+        return get_table("sub_categories")
+
+    @property
+    def sub_svcs(self):
+        return get_table("sub_services")
 
     def list_categories(self, conn):
         sel = self.cats.select().where(self.cats.c.is_active == True).order_by(self.cats.c.sort_order)

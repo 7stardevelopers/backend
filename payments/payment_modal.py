@@ -1,12 +1,19 @@
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
 class PaymentMaster:
-    def __init__(self):
-        self.pay = metadata.tables["payments"]
-        self.payout = metadata.tables["payout_requests"]
-        self.earnings = metadata.tables["provider_earnings"]
+    @property
+    def pay(self):
+        return get_table("payments")
+
+    @property
+    def payout(self):
+        return get_table("payout_requests")
+
+    @property
+    def earnings(self):
+        return get_table("provider_earnings")
 
     def create_payment(self, conn, data: dict) -> dict:
         data["payment_id"] = new_uuid()

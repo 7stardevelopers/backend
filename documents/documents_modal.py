@@ -1,10 +1,11 @@
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
 class DocumentsMaster:
-    def __init__(self):
-        self.d = metadata.tables["provider_documents"]
+    @property
+    def d(self):
+        return get_table("provider_documents")
 
     def create(self, conn, data: dict) -> dict:
         data["document_id"] = new_uuid()

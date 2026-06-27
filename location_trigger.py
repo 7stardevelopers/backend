@@ -27,8 +27,8 @@ def _process_upcoming_bookings(conn):
         SELECT b.booking_id, b.customer_id, b.provider_id, b.scheduled_at
         FROM bookings b
         WHERE b.status = 'ACCEPTED'
-          AND b.scheduled_at BETWEEN NOW() AND NOW() + INTERVAL '75 minutes'
-          AND (b.service_snapshot->>'location_triggered')::boolean IS NOT TRUE
+          AND b.scheduled_at BETWEEN NOW() AND NOW() + INTERVAL 75 MINUTE
+          AND COALESCE(JSON_EXTRACT(b.service_snapshot, '$.location_triggered'), FALSE) <> TRUE
     """)).fetchall()
 
     if not rows:
@@ -60,7 +60,7 @@ def _process_upcoming_bookings(conn):
                 )
             conn.execute(text("""
                 UPDATE bookings
-                SET service_snapshot = COALESCE(service_snapshot, '{}') || '{"location_triggered": true}'
+                SET service_snapshot = JSON_SET(COALESCE(service_snapshot, JSON_OBJECT()), '$.location_triggered', TRUE)
                 WHERE booking_id = :bid
             """), {"bid": str(booking_id)})
         except Exception as e:

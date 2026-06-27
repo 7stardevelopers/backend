@@ -1,12 +1,21 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class CreateBookingSchema(BaseModel):
     service_id: str = Field(..., min_length=1)
     scheduled_at: datetime
     address_id: Optional[str] = None
+
+    @field_validator("scheduled_at")
+    @classmethod
+    def must_be_future(cls, v):
+        now = datetime.now(timezone.utc)
+        aware = v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        if aware <= now:
+            raise ValueError("scheduled_at must be in the future")
+        return v
     address_snapshot: Optional[dict] = None
     service_snapshot: Optional[dict] = None
     sub_total: int = Field(..., gt=0)

@@ -24,10 +24,12 @@ def score_provider(provider: dict, booking_lat: float, booking_lng: float) -> fl
     rating = float(provider.get("avg_rating") or 0)
     rating_score = (rating / 5) * 30
 
-    acc_rate = float(provider.get("acceptance_rate") or 1.0)
+    acc_raw = provider.get("acceptance_rate")
+    acc_rate = float(acc_raw if acc_raw is not None else 1.0)
     acceptance_score = acc_rate * 20
 
-    avg_resp = float(provider.get("avg_response_secs") or 30)
+    resp_raw = provider.get("avg_response_secs")
+    avg_resp = float(resp_raw if resp_raw is not None else 30)
     response_score = max(0, 1 - avg_resp / 30) * 10
 
     return proximity_score + rating_score + acceptance_score + response_score

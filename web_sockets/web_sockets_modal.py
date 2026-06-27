@@ -1,16 +1,18 @@
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import now_utc
 
 
 class WebSocketsMaster:
-    def __init__(self):
-        self.ws = metadata.tables["ws_connections"]
+    @property
+    def ws(self):
+        return get_table("ws_connections")
 
-    def connect(self, conn, connection_id: str, user_id: str, booking_id: str = None):
+    def connect(self, conn, connection_id: str, user_id: str, booking_id: str = None, role: str = None):
         ins = self.ws.insert().values(
             connection_id=connection_id,
             user_id=user_id,
             booking_id=booking_id,
+            role=role,
             connected_at=now_utc(),
         )
         conn.execute(ins)

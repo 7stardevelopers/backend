@@ -1,14 +1,19 @@
-import uuid
-from sqlalchemy import text
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
 class UsersMaster:
-    def __init__(self):
-        self.t = metadata.tables["users"]
-        self.addr = metadata.tables["user_addresses"]
-        self.refresh = metadata.tables["refresh_tokens"]
+    @property
+    def t(self):
+        return get_table("users")
+
+    @property
+    def addr(self):
+        return get_table("user_addresses")
+
+    @property
+    def refresh(self):
+        return get_table("refresh_tokens")
 
     # ── users ─────────────────────────────────────────────────────────
 

@@ -1,11 +1,12 @@
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 from datetime import datetime, timezone
 
 
 class InstantBookingsMaster:
-    def __init__(self):
-        self.t = metadata.tables["instant_bookings"]
+    @property
+    def t(self):
+        return get_table("instant_bookings")
 
     def create(self, conn, booking_id: str, surge_applied: bool = False, surge_pct: int = 0) -> dict:
         record = {

@@ -1,13 +1,17 @@
 import random
 import string
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
 class BookingsMaster:
-    def __init__(self):
-        self.t = metadata.tables["bookings"]
-        self.items = metadata.tables["booking_items"]
+    @property
+    def t(self):
+        return get_table("bookings")
+
+    @property
+    def items(self):
+        return get_table("booking_items")
 
     def create(self, conn, obj: dict) -> dict:
         obj["booking_id"] = new_uuid()

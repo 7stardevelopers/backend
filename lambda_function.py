@@ -1,11 +1,15 @@
 import json
 from utilities.env_loader import load_secrets
-from utilities.db_connection import get_connection
+from utilities.db_connection import get_connection, get_engine
+
+# Must run before routing imports: routing.py instantiates all services at module
+# level, whose __init__ methods access metadata.tables[...] which requires reflect().
+load_secrets()
+get_engine()
+
 from request_handler import parse_request
 from routing import dispatch_rest
 from routing_wss import dispatch_wss
-
-load_secrets()
 
 
 def handler(event, context):

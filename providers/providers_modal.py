@@ -1,14 +1,24 @@
 from sqlalchemy import text
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
 class ProvidersMaster:
-    def __init__(self):
-        self.p = metadata.tables["providers"]
-        self.ps = metadata.tables["provider_services"]
-        self.pl = metadata.tables["provider_locations"]
-        self.u = metadata.tables["users"]
+    @property
+    def p(self):
+        return get_table("providers")
+
+    @property
+    def ps(self):
+        return get_table("provider_services")
+
+    @property
+    def pl(self):
+        return get_table("provider_locations")
+
+    @property
+    def u(self):
+        return get_table("users")
 
     def find_by_user_id(self, conn, user_id: str):
         sel = self.p.select().where(self.p.c.user_id == user_id)
@@ -44,7 +54,7 @@ class ProvidersMaster:
         conn.execute(text("""
             INSERT INTO provider_locations (provider_id, lat, lng, updated_at)
             VALUES (:pid, :lat, :lng, NOW())
-            ON CONFLICT (provider_id) DO UPDATE SET lat=:lat, lng=:lng, updated_at=NOW()
+            ON DUPLICATE KEY UPDATE lat=:lat, lng=:lng, updated_at=NOW()
         """), {"pid": provider_id, "lat": lat, "lng": lng})
 
     def get_location(self, conn, provider_id: str):
@@ -71,7 +81,7 @@ class ProvidersMaster:
             JOIN provider_services ps ON p.provider_id = ps.provider_id
             LEFT JOIN provider_locations pl ON p.provider_id = pl.provider_id
             WHERE p.status = 'APPROVED'
-              AND p.is_available = true
+              AND p.is_available = TRUE
               AND ps.service_id = :sid
         """), {"sid": service_id})
         return [dict(r._mapping) for r in result.fetchall()]

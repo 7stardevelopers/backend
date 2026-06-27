@@ -1,11 +1,17 @@
-from utilities.db_connection import metadata
+from datetime import datetime, timezone
+from sqlalchemy import text
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
 class CouponsMaster:
-    def __init__(self):
-        self.c = metadata.tables["coupons"]
-        self.cu = metadata.tables["coupon_uses"]
+    @property
+    def c(self):
+        return get_table("coupons")
+
+    @property
+    def cu(self):
+        return get_table("coupon_uses")
 
     def find_by_code(self, conn, code: str):
         sel = self.c.select().where(self.c.c.code == code.upper()).where(self.c.c.is_active == True)
@@ -13,7 +19,6 @@ class CouponsMaster:
         return dict(row._mapping) if row else None
 
     def list_active(self, conn):
-        from datetime import datetime, timezone
         sel = self.c.select().where(self.c.c.is_active == True).where(
             self.c.c.expires_at > datetime.now(timezone.utc)
         ).order_by(self.c.c.created_at.desc())
@@ -33,7 +38,6 @@ class CouponsMaster:
             booking_id=booking_id,
             created_at=now_utc(),
         ))
-        from sqlalchemy import text
         conn.execute(text("UPDATE coupons SET used_count = used_count + 1 WHERE coupon_id = :cid"),
                      {"cid": coupon_id})
 

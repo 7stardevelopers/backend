@@ -1,10 +1,12 @@
-from utilities.db_connection import metadata
+from sqlalchemy import text
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
 class NotificationsMaster:
-    def __init__(self):
-        self.tc = metadata.tables["token_connections"]
+    @property
+    def tc(self):
+        return get_table("token_connections")
 
     def register_token(self, conn, user_id: str, token_id: str, device_type: str = None):
         sel = self.tc.select().where(self.tc.c.token_id == token_id)
@@ -27,8 +29,6 @@ class NotificationsMaster:
         return [dict(r._mapping) for r in rows]
 
     def get_all_tokens_for_role(self, conn, role: str) -> list:
-        from utilities.db_connection import metadata as meta
-        from sqlalchemy import text
         result = conn.execute(text(
             "SELECT tc.* FROM token_connections tc JOIN users u ON tc.user_id = u.user_id WHERE u.role = :role"
         ), {"role": role})

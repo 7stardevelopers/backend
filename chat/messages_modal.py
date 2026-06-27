@@ -1,11 +1,12 @@
 from sqlalchemy import text
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
 class MessagesMaster:
-    def __init__(self):
-        self.m = metadata.tables["chat_messages"]
+    @property
+    def m(self):
+        return get_table("chat_messages")
 
     def send(self, conn, from_id: str, to_id: str, booking_id: str, text: str, message_type: str = "text") -> dict:
         msg = {

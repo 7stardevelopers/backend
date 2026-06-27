@@ -1,11 +1,15 @@
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
 class SupportMaster:
-    def __init__(self):
-        self.t = metadata.tables["support_tickets"]
-        self.m = metadata.tables["ticket_messages"]
+    @property
+    def t(self):
+        return get_table("support_tickets")
+
+    @property
+    def m(self):
+        return get_table("ticket_messages")
 
     def create_ticket(self, conn, data: dict) -> dict:
         data["ticket_id"] = new_uuid()

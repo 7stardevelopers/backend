@@ -1,14 +1,24 @@
 from sqlalchemy import text, func
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import now_utc
 
 
 class AdminMaster:
-    def __init__(self):
-        self.users = metadata.tables["users"]
-        self.bookings = metadata.tables["bookings"]
-        self.payments = metadata.tables["payments"]
-        self.providers = metadata.tables["providers"]
+    @property
+    def users(self):
+        return get_table("users")
+
+    @property
+    def bookings(self):
+        return get_table("bookings")
+
+    @property
+    def payments(self):
+        return get_table("payments")
+
+    @property
+    def providers(self):
+        return get_table("providers")
 
     def get_dashboard_stats(self, conn) -> dict:
         total_users = conn.execute(text("SELECT COUNT(*) FROM users WHERE role='CUSTOMER'")).scalar()

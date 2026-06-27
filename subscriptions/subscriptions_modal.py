@@ -1,12 +1,16 @@
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 from datetime import datetime, timedelta, timezone
 
 
 class SubscriptionsMaster:
-    def __init__(self):
-        self.plans = metadata.tables["subscription_plans"]
-        self.subs = metadata.tables["user_subscriptions"]
+    @property
+    def plans(self):
+        return get_table("subscription_plans")
+
+    @property
+    def subs(self):
+        return get_table("user_subscriptions")
 
     def list_plans(self, conn):
         sel = self.plans.select().where(self.plans.c.is_active == True).order_by(self.plans.c.sort_order)

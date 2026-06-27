@@ -6,6 +6,12 @@ _engine = None
 metadata = MetaData()
 
 
+def get_table(name: str):
+    """Return a reflected Table object. Ensures the engine (and reflect) ran first."""
+    get_engine()
+    return metadata.tables[name]
+
+
 def get_engine():
     global _engine
     if _engine is None:
@@ -14,6 +20,7 @@ def get_engine():
             raise RuntimeError("DB_URL environment variable not set")
         _engine = create_engine(
             db_url,
+            connect_args={"init_command": "SET time_zone='+00:00'"},
             pool_size=1,
             max_overflow=2,
             pool_pre_ping=True,

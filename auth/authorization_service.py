@@ -134,6 +134,16 @@ class AuthorizationService:
         return "success", {"message": "Profile updated"}
 
     def logout(self, obj, connection):
+        refresh_token = obj.get("refresh_token")
+        if refresh_token:
+            secret = os.environ.get("JWT_SECRET", "")
+            try:
+                payload = jwt.decode(refresh_token, secret, algorithms=["HS256"])
+                jti = payload.get("jti")
+                if jti:
+                    self.modal.revoke_refresh_token(connection, jti)
+            except jwt.InvalidTokenError:
+                pass
         return "success", {"message": "Logged out"}
 
     # ── helpers ───────────────────────────────────────────────────────

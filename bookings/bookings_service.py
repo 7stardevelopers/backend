@@ -1,9 +1,18 @@
+import os
+import razorpay
+from sqlalchemy import text
+
 from bookings.bookings_modal import BookingsMaster
 from bookings.bookings_validator import (
     CreateBookingSchema, UpdateStatusSchema, VerifyDoorOTPSchema, AddTipSchema
 )
+from coupons.coupons_modal import CouponsMaster
 from notifications.notifications_service import NotificationsService
+from payments.payment_modal import PaymentMaster
+from providers.provider_matching import match_provider
+from subscriptions.subscriptions_modal import SubscriptionsMaster
 from utilities.common_table_elements import new_uuid, now_utc
+from utilities.db_connection import get_table
 
 ALLOWED_TRANSITIONS = {
     "PROVIDER": {
@@ -36,6 +45,19 @@ class BookingsService:
             raise PermissionError("Only customers can create bookings")
 
         validated = CreateBookingSchema(**obj)
+        sub_total = validated.sub_total
+        discount = validated.discount
+
+        sub_modal = SubscriptionsMaster()
+        active_sub = sub_modal.get_active_subscription(connection, user_id)
+        if active_sub:
+            plan = sub_modal.get_plan(connection, active_sub["plan_id"])
+            if plan and plan.get("discount_pct"):
+                sub_discount = int(sub_total * plan["discount_pct"] / 100)
+                discount += sub_discount
+
+        total_amount = max(0, sub_total - discount)
+
         booking_data = {
             "customer_id": user_id,
             "service_id": validated.service_id,
@@ -43,9 +65,9 @@ class BookingsService:
             "address_id": validated.address_id,
             "address_snapshot": validated.address_snapshot,
             "service_snapshot": validated.service_snapshot,
-            "sub_total": validated.sub_total,
-            "discount": validated.discount,
-            "total_amount": validated.total_amount,
+            "sub_total": sub_total,
+            "discount": discount,
+            "total_amount": total_amount,
             "coupon_id": validated.coupon_id,
             "is_instant": validated.is_instant,
             "customer_notes": validated.customer_notes,
@@ -54,11 +76,22 @@ class BookingsService:
         }
         booking = self.modal.create(connection, booking_data)
 
+        if active_sub:
+            try:
+                sub_modal.increment_bookings_used(connection, user_id)
+            except Exception as e:
+                print(f"[Subscription] increment_bookings_used failed (non-fatal): {e}")
+
+        if validated.coupon_id:
+            try:
+                CouponsMaster().record_use(connection, validated.coupon_id, user_id, booking["booking_id"])
+            except Exception as e:
+                print(f"[Coupon] record_use failed (non-fatal): {e}")
+
         if validated.items:
             self.modal.create_items(connection, booking["booking_id"], validated.items)
 
         try:
-            from providers.provider_matching import match_provider
             provider = match_provider(connection, booking)
             if provider:
                 self.modal.assign_provider(connection, booking["booking_id"], provider["provider_id"])
@@ -118,6 +151,10 @@ class BookingsService:
         booking_id = obj.get("id") or obj.get("booking_id")
         new_status = obj.get("status")
         booking = self.modal.read_one(connection, booking_id)
+
+        if role == "PROVIDER" and str(booking.get("provider_id")) != str(user_id):
+            raise PermissionError("You are not assigned to this booking")
+
         allowed = ALLOWED_TRANSITIONS.get(role, {}).get(booking["status"], [])
         if new_status not in allowed:
             raise ValueError(f"Cannot transition from {booking['status']} to {new_status}")
@@ -135,6 +172,21 @@ class BookingsService:
         if booking["status"] not in ("PENDING", "ACCEPTED"):
             raise ValueError(f"Cannot cancel booking in {booking['status']} status")
         updated = self.modal.update_status(connection, booking_id, "CANCELLED")
+
+        if booking.get("payment_status") == "PAID" and booking.get("payment_id"):
+            try:
+                pay_modal = PaymentMaster()
+                payment = pay_modal.find_payment(connection, payment_id=booking["payment_id"])
+                if payment and payment.get("razorpay_payment_id"):
+                    client = razorpay.Client(auth=(
+                        os.environ.get("RAZORPAY_KEY_ID", ""),
+                        os.environ.get("RAZORPAY_KEY_SECRET", ""),
+                    ))
+                    client.payment.refund(payment["razorpay_payment_id"], {"amount": payment["amount"]})
+                    pay_modal.update_payment(connection, payment["payment_id"], {"status": "REFUNDED"})
+            except Exception as e:
+                print(f"[Cancel] Refund initiation failed (non-fatal): {e}")
+
         return "success", updated
 
     def verify_door_otp(self, obj, connection):
@@ -161,14 +213,12 @@ class BookingsService:
             raise ValueError("Can only tip on completed bookings")
         data = AddTipSchema(**{k: v for k, v in obj.items() if k not in ("id", "_user_id", "_role")})
         tips_t = connection.execute(
-            __import__("sqlalchemy").text("SELECT 1 FROM tips WHERE booking_id=:bid AND customer_id=:cid"),
+            text("SELECT 1 FROM tips WHERE booking_id=:bid AND customer_id=:cid"),
             {"bid": booking_id, "cid": user_id}
         ).fetchone()
         if tips_t:
             raise ValueError("Tip already added for this booking")
-        from utilities.db_connection import metadata
-        t = metadata.tables["tips"]
-        from utilities.common_table_elements import new_uuid, now_utc
+        t = get_table("tips")
         connection.execute(t.insert().values(
             tip_id=new_uuid(),
             booking_id=booking_id,

@@ -1,12 +1,19 @@
 from sqlalchemy import text
-from utilities.db_connection import metadata
+from utilities.db_connection import get_table
 
 
 class FinanceMaster:
-    def __init__(self):
-        self.pay = metadata.tables["payments"]
-        self.payout = metadata.tables["payout_requests"]
-        self.earnings = metadata.tables["provider_earnings"]
+    @property
+    def pay(self):
+        return get_table("payments")
+
+    @property
+    def payout(self):
+        return get_table("payout_requests")
+
+    @property
+    def earnings(self):
+        return get_table("provider_earnings")
 
     def get_overview(self, conn) -> dict:
         gmv = conn.execute(text("SELECT COALESCE(SUM(amount),0) FROM payments WHERE status='PAID'")).scalar()

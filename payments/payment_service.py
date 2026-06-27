@@ -9,6 +9,7 @@ from payments.payment_validator import (
 )
 from bookings.bookings_modal import BookingsMaster
 from providers.providers_modal import ProvidersMaster
+from notifications.notifications_service import NotificationsService
 from utilities.common_table_elements import now_utc
 
 PLATFORM_FEE_PCT = int(os.environ.get("PLATFORM_FEE_PCT", "10"))
@@ -25,6 +26,7 @@ class PaymentService:
         self.modal = PaymentMaster()
         self.booking_modal = BookingsMaster()
         self.provider_modal = ProvidersMaster()
+        self.notif = NotificationsService()
 
     def create_order(self, obj, connection):
         user_id = obj.pop("_user_id")
@@ -86,6 +88,20 @@ class PaymentService:
             provider_earning = total - fee
             self.modal.add_earning(connection, booking["provider_id"], data.booking_id, provider_earning)
             self.provider_modal.update_wallet(connection, booking["provider_id"], provider_earning)
+
+        try:
+            notify_ids = [str(booking["customer_id"])]
+            if booking.get("provider_id"):
+                notify_ids.append(str(booking["provider_id"]))
+            self.notif.send_push(
+                connection=connection,
+                user_ids=notify_ids,
+                title="Payment Confirmed",
+                body="Your payment has been received. Your booking is confirmed.",
+                data={"type": "payment_confirmed", "booking_id": data.booking_id},
+            )
+        except Exception as e:
+            print(f"[Payment] Push notification failed (non-fatal): {e}")
 
         return "success", {"message": "Payment verified", "payment_id": payment["payment_id"]}
 

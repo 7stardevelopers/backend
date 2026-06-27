@@ -37,6 +37,9 @@ Parameters:
     Type: String
     Default: ""
 
+Conditions:
+  HasVpc: !Not [!Equals [!Ref VpcSecurityGroupId, ""]]
+
 Resources:
   ApiFunction:
     Type: AWS::Serverless::Function
@@ -45,6 +48,14 @@ Resources:
       Handler: lambda_function.handler
       CodeUri: .
       Description: 7StarExperts main API handler
+      VpcConfig: !If
+        - HasVpc
+        - SecurityGroupIds:
+            - !Ref VpcSecurityGroupId
+          SubnetIds:
+            - !Ref VpcSubnetId1
+            - !Ref VpcSubnetId2
+        - !Ref AWS::NoValue
       Events:
         RestApi:
           Type: Api
@@ -76,6 +87,14 @@ Resources:
       Handler: location_trigger.handler
       CodeUri: .
       Description: Fires push notifications 1 hour before scheduled bookings
+      VpcConfig: !If
+        - HasVpc
+        - SecurityGroupIds:
+            - !Ref VpcSecurityGroupId
+          SubnetIds:
+            - !Ref VpcSubnetId1
+            - !Ref VpcSubnetId2
+        - !Ref AWS::NoValue
       Events:
         ScheduleRule:
           Type: Schedule

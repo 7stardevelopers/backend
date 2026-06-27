@@ -1,0 +1,28 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "7starexperts-api"
+
+[staging.deploy.parameters]
+stack_name        = "7starexperts-api-staging"
+s3_bucket         = "7starexperts-sam-staging"
+s3_prefix         = "7starexperts-api"
+region            = "ap-south-1"
+confirm_changeset = false
+capabilities      = "CAPABILITY_IAM"
+parameter_overrides = [
+  "Environment=staging",
+  "SecretName=7starexperts/staging/secrets"
+]
+
+[production.deploy.parameters]
+stack_name        = "7starexperts-api-production"
+s3_bucket         = "7starexperts-sam-production"
+s3_prefix         = "7starexperts-api"
+region            = "ap-south-1"
+confirm_changeset = false
+capabilities      = "CAPABILITY_IAM"
+parameter_overrides = [
+  "Environment=production",
+  "SecretName=7starexperts/production/secrets"
+]
