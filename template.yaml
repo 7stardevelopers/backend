@@ -69,7 +69,7 @@ Resources:
             Method: OPTIONS
       Policies:
         - AWSSecretsManagerGetSecretValuePolicy:
-            SecretArn: !Sub "arn:aws:secretsmanager:ap-south-1:${AWS::AccountId}:secret:${SecretName}"
+            SecretArn: !Sub "arn:aws:secretsmanager:ap-south-1:${AWS::AccountId}:secret:${SecretName}*"
         - S3CrudPolicy:
             BucketName: !Sub "7starexperts-documents-${Environment}"
         - S3CrudPolicy:
@@ -103,7 +103,7 @@ Resources:
             Enabled: true
       Policies:
         - AWSSecretsManagerGetSecretValuePolicy:
-            SecretArn: !Sub "arn:aws:secretsmanager:ap-south-1:${AWS::AccountId}:secret:${SecretName}"
+            SecretArn: !Sub "arn:aws:secretsmanager:ap-south-1:${AWS::AccountId}:secret:${SecretName}*"
 
 Outputs:
   ApiUrl:
