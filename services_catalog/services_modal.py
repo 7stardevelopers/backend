@@ -80,3 +80,27 @@ class ServicesMaster:
 
     def delete_service(self, conn, service_id: str):
         conn.execute(self.svcs.update().where(self.svcs.c.service_id == service_id).values(is_active=False))
+
+    def create_sub_category(self, conn, service_id: str, name: str, sort_order: int = 0) -> str:
+        sc_id = new_uuid()
+        conn.execute(self.sub_cats.insert().values(
+            sub_category_id=sc_id,
+            service_id=service_id,
+            name=name,
+            sort_order=sort_order,
+        ))
+        return sc_id
+
+    def create_sub_service(self, conn, sub_category_id: str, service_id: str, data: dict) -> str:
+        ss_id = new_uuid()
+        conn.execute(self.sub_svcs.insert().values(
+            sub_service_id=ss_id,
+            sub_category_id=sub_category_id,
+            service_id=service_id,
+            name=data["name"],
+            description=data.get("description"),
+            price=int(data["price"]),
+            duration_minutes=data.get("duration_minutes"),
+            is_active=True,
+        ))
+        return ss_id

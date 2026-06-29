@@ -136,6 +136,7 @@ ROUTES = [
     ("POST", "/admin/services",             _admin.create_service,       []),
     ("PATCH",r"/admin/services/(?P<id>[^/]+)", _admin.update_service,    ["id"]),
     ("DELETE",r"/admin/services/(?P<id>[^/]+)", _admin.delete_service,   ["id"]),
+    ("POST", r"/admin/services/(?P<id>[^/]+)/sub-categories", _admin.create_sub_category, ["id"]),
 
     # FINANCE
     ("GET",  "/finance/overview",           _fin.overview,               []),

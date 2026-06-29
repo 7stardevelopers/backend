@@ -1,5 +1,5 @@
 from admin.admin_modal import AdminMaster
-from admin.admin_validator import UpdateBookingSchema, CreateServiceAdminSchema
+from admin.admin_validator import UpdateBookingSchema, CreateServiceAdminSchema, CreateSubCategorySchema
 
 
 class AdminService:
@@ -66,3 +66,17 @@ class AdminService:
         from services_catalog.services_modal import ServicesMaster
         ServicesMaster().delete_service(connection, service_id)
         return "success", {"message": "Service deleted"}
+
+    def create_sub_category(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        service_id = obj.pop("id")
+        from services_catalog.services_modal import ServicesMaster
+        modal = ServicesMaster()
+        data = CreateSubCategorySchema(**obj)
+        sc_id = modal.create_sub_category(connection, service_id, data.name, data.sort_order)
+        items_created = 0
+        for item in (data.items or []):
+            modal.create_sub_service(connection, sc_id, service_id, item.model_dump())
+            items_created += 1
+        return "created", {"sub_category_id": sc_id, "items_created": items_created}
