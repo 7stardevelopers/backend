@@ -42,6 +42,11 @@ ROUTES = [
     ("PATCH","/auth/me",                    _auth.update_profile,        []),
     ("POST", "/auth/logout",               _auth.logout,                []),
 
+    # AUTH — ADDRESSES
+    ("POST",   "/auth/me/addresses",                          _auth.add_address,    []),
+    ("PATCH",  r"/auth/me/addresses/(?P<id>[^/]+)",           _auth.update_address, ["id"]),
+    ("DELETE", r"/auth/me/addresses/(?P<id>[^/]+)",           _auth.delete_address, ["id"]),
+
     # SERVICES CATALOG
     ("GET",  "/categories",                 _svcs.list_categories,       []),
     ("GET",  "/services/search",            _svcs.search,                []),

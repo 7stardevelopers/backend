@@ -133,6 +133,40 @@ class AuthorizationService:
             self.modal.update(connection, user_id, fields)
         return "success", {"message": "Profile updated"}
 
+    def add_address(self, obj, connection):
+        user_id = obj.pop("_user_id", None)
+        obj.pop("_role", None)
+        if not user_id:
+            raise PermissionError("Authentication required")
+        data = AddAddressSchema(**{k: v for k, v in obj.items() if not k.startswith("_")})
+        address_id = self.modal.add_address(connection, user_id, data.model_dump(exclude_none=True))
+        return "created", {"address_id": address_id}
+
+    def update_address(self, obj, connection):
+        user_id = obj.pop("_user_id", None)
+        obj.pop("_role", None)
+        address_id = obj.pop("id", None)
+        if not user_id:
+            raise PermissionError("Authentication required")
+        if not address_id:
+            raise ValueError("address_id required")
+        allowed = {"label", "full_address", "lat", "lng", "pincode", "city", "is_default"}
+        fields = {k: v for k, v in obj.items() if k in allowed and v is not None}
+        if fields:
+            self.modal.update_address(connection, user_id, address_id, fields)
+        return "success", {"message": "Address updated"}
+
+    def delete_address(self, obj, connection):
+        user_id = obj.pop("_user_id", None)
+        obj.pop("_role", None)
+        address_id = obj.get("id") or obj.get("address_id")
+        if not user_id:
+            raise PermissionError("Authentication required")
+        if not address_id:
+            raise ValueError("address_id required")
+        self.modal.delete_address(connection, user_id, address_id)
+        return "success", {"message": "Address deleted"}
+
     def logout(self, obj, connection):
         refresh_token = obj.get("refresh_token")
         if refresh_token:

@@ -65,6 +65,27 @@ class UsersMaster:
         conn.execute(self.addr.insert().values(**data))
         return data["address_id"]
 
+    def update_address(self, conn, user_id: str, address_id: str, fields: dict):
+        if fields.get("is_default"):
+            conn.execute(
+                self.addr.update()
+                .where(self.addr.c.user_id == user_id)
+                .values(is_default=False)
+            )
+        conn.execute(
+            self.addr.update()
+            .where(self.addr.c.address_id == address_id)
+            .where(self.addr.c.user_id == user_id)
+            .values(**fields)
+        )
+
+    def delete_address(self, conn, user_id: str, address_id: str):
+        conn.execute(
+            self.addr.delete()
+            .where(self.addr.c.address_id == address_id)
+            .where(self.addr.c.user_id == user_id)
+        )
+
     # ── refresh tokens ────────────────────────────────────────────────
 
     def store_refresh_token(self, conn, user_id: str, jti: str, expires_at):
