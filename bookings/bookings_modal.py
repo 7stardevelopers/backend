@@ -65,8 +65,13 @@ class BookingsMaster:
 
     def create_items(self, conn, booking_id: str, items: list):
         for item in items:
-            item["booking_id"] = booking_id
-            conn.execute(self.items.insert().values(**item))
+            conn.execute(self.items.insert().values(
+                booking_id=booking_id,
+                sub_service_id=item["sub_service_id"],
+                name_snapshot=item.get("name"),
+                price_snapshot=item.get("price"),
+                quantity=item.get("quantity", 1),
+            ))
 
     def get_items(self, conn, booking_id: str) -> list:
         sel = self.items.select().where(self.items.c.booking_id == booking_id)

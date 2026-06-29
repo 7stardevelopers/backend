@@ -67,7 +67,18 @@ JWT is decoded in `request_handler.py` before routing. `user_id` and `role` are 
 ### Secrets
 In Lambda: `env_loader.load_secrets()` runs at cold-start, fetches JSON from AWS Secrets Manager (`SECRET_NAME` env var), and sets all keys into `os.environ`. Locally: skip `SECRET_NAME` and set vars directly in `.env`.
 
+## Live Staging URL
+
+`https://1ipuylc4mh.execute-api.ap-south-1.amazonaws.com/Prod/`
+
+DB: MySQL 8 on RDS t3.micro | Redis: redis.io external (not ElastiCache)
+
 ### Adding a new endpoint
 1. Create `<module>/<module>_modal.py`, `<module>_validator.py`, `<module>_service.py`
 2. Instantiate the service in `routing.py` at module level
 3. Add route tuples to the `ROUTES` list: `("METHOD", r"/path/pattern/(?P<id>[^/]+)", _svc.method, ["id"])`
+
+### Recent additions (as of 2026-06-29)
+- `POST /admin/services/{id}/sub-categories` — creates a sub_category + all its sub_service items in one call
+  - Handler: `_admin.create_sub_category` in `admin/admin_service.py`
+  - Seeding script: `backend/seed_services.py` (uses this endpoint; DB was seeded directly via SQL instead)
