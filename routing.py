@@ -88,6 +88,7 @@ ROUTES = [
     # PROVIDERS
     ("GET",  "/providers/me",               _prov.get_my_profile,        []),
     ("PATCH","/providers/me",               _prov.update_profile,        []),
+    ("PATCH","/providers/me/services",       _prov.set_services,          []),
     ("PATCH","/providers/me/availability",  _prov.toggle_availability,   []),
     ("PATCH","/providers/me/location",      _prov.update_location,       []),
     ("GET",  "/providers/nearby",           _prov.get_nearby,            []),

@@ -1,7 +1,7 @@
 from providers.providers_modal import ProvidersMaster
 from providers.providers_validator import (
     UpdateProviderProfileSchema, UpdateLocationSchema,
-    ToggleAvailabilitySchema, NearbyProvidersSchema,
+    ToggleAvailabilitySchema, NearbyProvidersSchema, SetServicesSchema,
 )
 from notifications.notifications_service import NotificationsService
 from utilities.common_table_elements import new_uuid
@@ -34,6 +34,14 @@ class ProvidersService:
         if fields:
             self.modal.update(connection, provider["provider_id"], fields)
         return "success", {"message": "Profile updated"}
+
+    def set_services(self, obj, connection):
+        user_id = obj.pop("_user_id")
+        obj.pop("_role", None)
+        provider = self._get_or_create_provider(connection, user_id)
+        data = SetServicesSchema(**obj)
+        self.modal.set_services(connection, provider["provider_id"], data.service_ids)
+        return "success", {"message": "Services updated"}
 
     def toggle_availability(self, obj, connection):
         user_id = obj.pop("_user_id")

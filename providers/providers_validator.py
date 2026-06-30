@@ -2,6 +2,10 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 
 
+class SetServicesSchema(BaseModel):
+    service_ids: List[str] = Field(..., min_length=1)
+
+
 class UpdateProviderProfileSchema(BaseModel):
     bio: Optional[str] = None
     years_experience: Optional[int] = None
