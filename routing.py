@@ -14,6 +14,7 @@ from providers.providers_service import ProvidersService
 from documents.documents_service import DocumentsService
 from admin.admin_service import AdminService
 from finance.finance_service import FinanceService
+from chat.messages_service import MessagesService
 
 _auth   = AuthorizationService()
 _books  = BookingsService()
@@ -30,6 +31,7 @@ _prov   = ProvidersService()
 _docs   = DocumentsService()
 _admin  = AdminService()
 _fin    = FinanceService()
+_chat   = MessagesService()
 
 # (METHOD, path_pattern, handler, param_names)
 # param_names: list of path param names extracted via regex group
@@ -117,6 +119,10 @@ ROUTES = [
     ("POST", "/subscriptions/subscribe",    _subs.subscribe,             []),
     ("GET",  "/subscriptions/mine",         _subs.get_mine,              []),
     ("POST", "/subscriptions/cancel",       _subs.cancel,                []),
+
+    # CHAT (REST — works without WebSocket; WS push is attempted automatically)
+    ("GET",  "/chat/messages",              _chat.list_messages,         []),
+    ("POST", "/chat/messages",              _chat.send_message,          []),
 
     # NOTIFICATIONS
     ("POST", "/notifications/register",     _notif.register_token,       []),
