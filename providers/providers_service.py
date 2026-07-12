@@ -1,8 +1,9 @@
 from providers.providers_modal import ProvidersMaster
 from providers.providers_validator import (
     UpdateProviderProfileSchema, UpdateLocationSchema,
-    ToggleAvailabilitySchema, NearbyProvidersSchema, SetServicesSchema,
+    ToggleAvailabilitySchema, NearbyProvidersSchema, SetServicesSchema, SetDocumentsSchema,
 )
+from documents.documents_modal import DocumentsMaster
 from notifications.notifications_service import NotificationsService
 from utilities.common_table_elements import new_uuid
 
@@ -11,6 +12,7 @@ class ProvidersService:
     def __init__(self):
         self.modal = ProvidersMaster()
         self.notif = NotificationsService()
+        self.docs_modal = DocumentsMaster()
 
     def _get_or_create_provider(self, conn, user_id: str):
         provider = self.modal.find_by_user_id(conn, user_id)
@@ -34,6 +36,22 @@ class ProvidersService:
         if fields:
             self.modal.update(connection, provider["provider_id"], fields)
         return "success", {"message": "Profile updated"}
+
+    def set_documents(self, obj, connection):
+        user_id = obj.pop("_user_id")
+        obj.pop("_role", None)
+        provider = self._get_or_create_provider(connection, user_id)
+        data = SetDocumentsSchema(**obj)
+        key_to_type = {
+            "aadhaar_front": "AADHAAR_FRONT",
+            "aadhaar_back":  "AADHAAR_BACK",
+            "pan":           "PAN",
+        }
+        for field, doc_type in key_to_type.items():
+            url = getattr(data, field)
+            if url:
+                self.docs_modal.upsert_by_type(connection, provider["provider_id"], doc_type, url)
+        return "success", {"message": "Documents saved"}
 
     def set_services(self, obj, connection):
         user_id = obj.pop("_user_id")
