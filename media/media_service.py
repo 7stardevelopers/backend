@@ -26,7 +26,7 @@ class MediaService:
         key = f"{folder}/{new_uuid()}{ext}"
         region = os.environ.get("AWS_REGION_NAME", "ap-south-1")
 
-        s3 = boto3.client("s3", region_name=region)
+        s3 = boto3.client("s3", region_name=region, endpoint_url=f"https://s3.{region}.amazonaws.com")
         upload_url = s3.generate_presigned_url(
             "put_object",
             Params={"Bucket": bucket, "Key": key, "ContentType": content_type},
