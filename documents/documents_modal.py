@@ -26,3 +26,9 @@ class DocumentsMaster:
 
     def update(self, conn, document_id: str, fields: dict):
         conn.execute(self.d.update().where(self.d.c.document_id == document_id).values(**fields))
+
+    def upsert_by_type(self, conn, provider_id: str, doc_type: str, file_url: str):
+        conn.execute(self.d.delete().where(
+            (self.d.c.provider_id == provider_id) & (self.d.c.doc_type == doc_type)
+        ))
+        self.create(conn, {"provider_id": provider_id, "doc_type": doc_type, "file_url": file_url})

@@ -14,6 +14,7 @@ from providers.providers_service import ProvidersService
 from documents.documents_service import DocumentsService
 from admin.admin_service import AdminService
 from finance.finance_service import FinanceService
+from media.media_service import MediaService
 
 _auth   = AuthorizationService()
 _books  = BookingsService()
@@ -30,6 +31,7 @@ _prov   = ProvidersService()
 _docs   = DocumentsService()
 _admin  = AdminService()
 _fin    = FinanceService()
+_media  = MediaService()
 
 # (METHOD, path_pattern, handler, param_names)
 # param_names: list of path param names extracted via regex group
@@ -47,6 +49,9 @@ ROUTES = [
     ("PATCH",  r"/auth/me/addresses/(?P<id>[^/]+)",           _auth.update_address, ["id"]),
     ("DELETE", r"/auth/me/addresses/(?P<id>[^/]+)",           _auth.delete_address, ["id"]),
 
+    # MEDIA
+    ("POST", "/media/presign",               _media.presign,              []),
+
     # SERVICES CATALOG
     ("GET",  "/categories",                 _svcs.list_categories,       []),
     ("GET",  "/services/search",            _svcs.search,                []),
@@ -61,6 +66,7 @@ ROUTES = [
     ("POST", r"/bookings/(?P<id>[^/]+)/cancel",  _books.cancel,          ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/otp-verify", _books.verify_door_otp, ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/tip",   _books.add_tip,           ["id"]),
+    ("POST", r"/bookings/(?P<id>[^/]+)/complete", _books.complete,        ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/rebook", _books.rebook,           ["id"]),
 
     # INSTANT BOOKINGS
@@ -88,6 +94,8 @@ ROUTES = [
     # PROVIDERS
     ("GET",  "/providers/me",               _prov.get_my_profile,        []),
     ("PATCH","/providers/me",               _prov.update_profile,        []),
+    ("PATCH","/providers/me/services",       _prov.set_services,          []),
+    ("PATCH","/providers/me/documents",     _prov.set_documents,         []),
     ("PATCH","/providers/me/availability",  _prov.toggle_availability,   []),
     ("PATCH","/providers/me/location",      _prov.update_location,       []),
     ("GET",  "/providers/nearby",           _prov.get_nearby,            []),

@@ -162,6 +162,22 @@ class BookingsService:
         self._notify_status_change(connection, updated, new_status)
         return "success", updated
 
+    def complete(self, obj, connection):
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        booking_id = obj.get("id") or obj.get("booking_id")
+        proof_photos = obj.get("proof_photos", [])
+        booking = self.modal.read_one(connection, booking_id)
+        if role != "PROVIDER" or str(booking.get("provider_id")) != str(user_id):
+            raise PermissionError("You are not assigned to this booking")
+        if booking["status"] != "IN_PROGRESS":
+            raise ValueError("Booking must be IN_PROGRESS to complete")
+        if proof_photos:
+            self.modal.update_proof_photos(connection, booking_id, proof_photos)
+        updated = self.modal.update_status(connection, booking_id, "COMPLETED")
+        self._notify_status_change(connection, updated, "COMPLETED")
+        return "success", {"message": "Booking completed"}
+
     def cancel(self, obj, connection):
         user_id = obj.pop("_user_id")
         role = obj.pop("_role", None)

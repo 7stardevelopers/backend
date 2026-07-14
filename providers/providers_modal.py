@@ -74,6 +74,13 @@ class ProvidersMaster:
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
+    def set_services(self, conn, provider_id: str, service_ids: list):
+        conn.execute(self.ps.delete().where(self.ps.c.provider_id == provider_id))
+        if service_ids:
+            conn.execute(self.ps.insert(), [
+                {"provider_id": provider_id, "service_id": sid} for sid in service_ids
+            ])
+
     def get_available_for_service(self, conn, service_id: str):
         result = conn.execute(text("""
             SELECT p.*, pl.lat as last_lat, pl.lng as last_lng
