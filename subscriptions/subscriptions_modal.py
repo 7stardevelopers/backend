@@ -22,6 +22,14 @@ class SubscriptionsMaster:
         row = conn.execute(sel).fetchone()
         return dict(row._mapping) if row else None
 
+    def create_plan(self, conn, data: dict) -> dict:
+        data["plan_id"] = new_uuid()
+        conn.execute(self.plans.insert().values(**data))
+        return data
+
+    def update_plan(self, conn, plan_id: str, fields: dict):
+        conn.execute(self.plans.update().where(self.plans.c.plan_id == plan_id).values(**fields))
+
     def get_active_subscription(self, conn, user_id: str):
         now = datetime.now(timezone.utc)
         sel = self.subs.select().where(

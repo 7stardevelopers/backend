@@ -78,6 +78,7 @@ ROUTES = [
     ("POST", "/payments/verify",            _pay.verify_payment,         []),
     ("POST", "/payments/payout-request",    _pay.payout_request,         []),
     ("POST", "/payments/refund",            _pay.request_refund,         []),
+    ("GET",  "/payments",                   _pay.list_all,               []),
 
     # COUPONS
     ("POST", "/coupons/validate",           _coupons.validate,           []),
@@ -89,6 +90,7 @@ ROUTES = [
     ("POST", "/reviews",                    _rev.create,                 []),
     ("GET",  r"/reviews/service/(?P<id>[^/]+)", _rev.list_for_service,   ["id"]),
     ("GET",  r"/reviews/provider/(?P<id>[^/]+)", _rev.list_for_provider, ["id"]),
+    ("GET",  "/reviews",                    _rev.list_all,               []),
     ("DELETE",r"/reviews/(?P<id>[^/]+)",    _rev.admin_delete,           ["id"]),
 
     # PROVIDERS
@@ -121,6 +123,8 @@ ROUTES = [
 
     # SUBSCRIPTIONS
     ("GET",  "/subscriptions/plans",        _subs.list_plans,            []),
+    ("POST", "/subscriptions/plans",        _subs.admin_create_plan,     []),
+    ("PATCH",r"/subscriptions/plans/(?P<id>[^/]+)", _subs.admin_update_plan, ["id"]),
     ("POST", "/subscriptions/subscribe",    _subs.subscribe,             []),
     ("GET",  "/subscriptions/mine",         _subs.get_mine,              []),
     ("POST", "/subscriptions/cancel",       _subs.cancel,                []),
@@ -145,6 +149,8 @@ ROUTES = [
     ("PATCH",r"/admin/services/(?P<id>[^/]+)", _admin.update_service,    ["id"]),
     ("DELETE",r"/admin/services/(?P<id>[^/]+)", _admin.delete_service,   ["id"]),
     ("POST", r"/admin/services/(?P<id>[^/]+)/sub-categories", _admin.create_sub_category, ["id"]),
+    ("GET",  "/logs",                       _admin.list_logs,            []),
+    ("GET",  "/admin/announcements",        _admin.list_announcements,   []),
 
     # FINANCE
     ("GET",  "/finance/overview",           _fin.overview,               []),

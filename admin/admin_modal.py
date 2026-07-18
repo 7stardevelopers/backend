@@ -20,6 +20,14 @@ class AdminMaster:
     def providers(self):
         return get_table("providers")
 
+    @property
+    def log_table(self):
+        return get_table("activity_log")
+
+    @property
+    def announcements_table(self):
+        return get_table("in_app_notifications")
+
     def get_dashboard_stats(self, conn) -> dict:
         total_users = conn.execute(text("SELECT COUNT(*) FROM users WHERE role='CUSTOMER'")).scalar()
         total_providers = conn.execute(text("SELECT COUNT(*) FROM providers")).scalar()
@@ -52,6 +60,22 @@ class AdminMaster:
     def list_users(self, conn, page=1):
         sel = self.users.select().where(self.users.c.role == "CUSTOMER").order_by(
             self.users.c.created_at.desc()
+        ).limit(20).offset((page-1)*20)
+        rows = conn.execute(sel).fetchall()
+        return [dict(r._mapping) for r in rows]
+
+    def list_logs(self, conn, page=1):
+        sel = self.log_table.select().order_by(
+            self.log_table.c.created_at.desc()
+        ).limit(20).offset((page-1)*20)
+        rows = conn.execute(sel).fetchall()
+        return [dict(r._mapping) for r in rows]
+
+    def list_announcements(self, conn, page=1):
+        sel = self.announcements_table.select().where(
+            self.announcements_table.c.type == "announcement"
+        ).order_by(
+            self.announcements_table.c.created_at.desc()
         ).limit(20).offset((page-1)*20)
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
