@@ -151,3 +151,13 @@ class ProvidersService:
         reason = obj.get("reason", "")
         self.modal.update(connection, provider_id, {"status": "SUSPENDED", "is_available": False})
         return "success", {"message": "Provider suspended"}
+
+    def admin_list_detailed(self, obj, connection):
+        role = obj.pop("_role", None)
+        obj.pop("_user_id", None)
+        if role != "ADMIN":
+            raise PermissionError("Admin role required")
+        status   = obj.get("status")
+        page     = int(obj.get("page", 1))
+        per_page = int(obj.get("per_page", 20))
+        return "success", self.modal.list_all_detailed(connection, status, page, per_page)
