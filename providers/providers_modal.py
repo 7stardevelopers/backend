@@ -108,3 +108,26 @@ class ProvidersMaster:
             conn.execute(text(
                 "UPDATE providers SET wallet_balance = wallet_balance - :amt WHERE provider_id = :pid"
             ), {"amt": amount, "pid": provider_id})
+
+    def list_all_detailed(self, conn, status=None, page=1, per_page=20):
+        where  = "WHERE p.status = :status" if status else ""
+        params = {"lim": per_page, "off": (page - 1) * per_page}
+        if status:
+            params["status"] = status
+        sql = f"""
+            SELECT p.provider_id, p.status, p.avg_rating, p.total_reviews,
+                   p.wallet_balance, p.is_available, p.acceptance_rate,
+                   p.years_experience, p.created_at,
+                   u.user_id, u.name, u.phone, u.email, u.photo_url,
+                   u.status AS user_status
+            FROM providers p
+            JOIN users u ON p.user_id = u.user_id
+            {where}
+            ORDER BY p.created_at DESC
+            LIMIT :lim OFFSET :off
+        """
+        count_sql = f"SELECT COUNT(*) FROM providers p {where}"
+        rows  = conn.execute(text(sql), params).mappings().fetchall()
+        cp    = {"status": status} if status else {}
+        total = int(conn.execute(text(count_sql), cp).scalar() or 0)
+        return {"items": [dict(r) for r in rows], "total": total}
