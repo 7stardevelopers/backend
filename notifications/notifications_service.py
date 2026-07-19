@@ -61,7 +61,7 @@ class NotificationsService:
 
     def admin_announce(self, obj, connection):
         role = obj.pop("_role", None)
-        obj.pop("_user_id", None)
+        sender_id = obj.pop("_user_id", None)
         if role != "ADMIN":
             raise PermissionError("Admin role required")
         target_role = obj.get("target_role", "CUSTOMER")
@@ -70,6 +70,14 @@ class NotificationsService:
         tokens = self.modal.get_all_tokens_for_role(connection, target_role)
         token_ids = [t["token_id"] for t in tokens if t.get("token_id", "").startswith("ExponentPushToken[")]
         self._batch_push(token_ids, title, body, {"type": "announcement"})
+        # Record one history row for the admin UI's announcement list — attributed
+        # to the sending admin, not fanned out per recipient (which could be
+        # thousands of rows for a broadcast to "ALL").
+        if sender_id:
+            from notifications.in_app_notifications.in_app_notifications_service import InAppNotificationsService
+            InAppNotificationsService().record_and_push(
+                connection, [sender_id], title, body, "announcement", {"target_role": target_role}
+            )
         return "success", {"message": f"Announcement sent to {len(token_ids)} devices"}
 
     def send_push(self, connection, user_ids: list, title: str, body: str, data: dict = None):

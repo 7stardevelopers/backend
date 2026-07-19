@@ -21,6 +21,8 @@ def handler(event, context):
 def handle_rest(event, context):
     method = event.get("httpMethod", "?")
     path = event.get("path", "?")
+    if method == "OPTIONS":
+        return response(200, {"status": "success", "data": None})
     try:
         req = parse_request(event)
         method, path = req["method"], req["path"]
