@@ -148,6 +148,7 @@ ROUTES = [
     ("GET",  "/admin/services",                                      _admin.list_all_services,           []),
     ("GET",  "/admin/payments",                                      _admin.list_payments,               []),
     ("GET",  "/admin/reviews",                                       _admin.list_reviews,                []),
+    ("GET",  "/admin/categories",                                    _admin.list_categories,             []),
     ("POST", "/admin/categories",                                    _admin.create_category,             []),
     ("PATCH",r"/admin/categories/(?P<id>[^/]+)",                     _admin.update_category,             ["id"]),
     ("GET",  "/admin/subscriptions/plans",                           _admin.list_subscription_plans_all, []),

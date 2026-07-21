@@ -114,6 +114,11 @@ class AdminService:
         obj.pop("_user_id", None)
         return "success", self.modal.list_all_services(connection)
 
+    def list_categories(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        return "success", self.modal.list_categories(connection)
+
     def list_payments(self, obj, connection):
         self._require_admin(obj.pop("_role", None))
         obj.pop("_user_id", None)
