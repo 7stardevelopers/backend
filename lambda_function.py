@@ -19,6 +19,8 @@ def handler(event, context):
 
 
 def handle_rest(event, context):
+    if event.get("httpMethod", "").upper() == "OPTIONS":
+        return response(200, {})
     try:
         req = parse_request(event)
         with get_connection() as conn:
