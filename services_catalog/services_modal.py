@@ -31,18 +31,6 @@ class ServicesMaster:
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
-    def list_categories_admin(self, conn):
-        sel = self.cats.select().order_by(self.cats.c.sort_order)
-        rows = conn.execute(sel).fetchall()
-        return [dict(r._mapping) for r in rows]
-
-    def list_services_admin(self, conn, category_id=None):
-        sel = self.svcs.select().order_by(self.svcs.c.sort_order)
-        if category_id:
-            sel = sel.where(self.svcs.c.category_id == category_id)
-        rows = conn.execute(sel).fetchall()
-        return [dict(r._mapping) for r in rows]
-
     def get_service_detail(self, conn, service_id: str):
         sel = self.svcs.select().where(self.svcs.c.service_id == service_id)
         row = conn.execute(sel).fetchone()
@@ -85,11 +73,6 @@ class ServicesMaster:
     def create_service(self, conn, data: dict):
         data["service_id"] = new_uuid()[:8]
         conn.execute(self.svcs.insert().values(**data))
-        return data
-
-    def create_category(self, conn, data: dict):
-        data["category_id"] = new_uuid()[:8]
-        conn.execute(self.cats.insert().values(**data))
         return data
 
     def update_service(self, conn, service_id: str, fields: dict):

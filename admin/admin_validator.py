@@ -8,13 +8,6 @@ class UpdateBookingSchema(BaseModel):
     notes: Optional[str] = None
 
 
-class CreateCategorySchema(BaseModel):
-    name: str = Field(..., min_length=1)
-    icon: Optional[str] = None
-    color: Optional[str] = None
-    sort_order: int = 0
-
-
 class CreateServiceAdminSchema(BaseModel):
     category_id: str
     name: str = Field(..., min_length=1)
