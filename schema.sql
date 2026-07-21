@@ -461,6 +461,18 @@ CREATE TABLE IF NOT EXISTS ws_connections (
     FOREIGN KEY (booking_id) REFERENCES bookings(booking_id)
 );
 
+-- ANNOUNCEMENTS
+CREATE TABLE IF NOT EXISTS announcements (
+    announcement_id CHAR(36)     NOT NULL DEFAULT (UUID()),
+    title           VARCHAR(255) NOT NULL,
+    body            TEXT         NOT NULL,
+    target_role     VARCHAR(20)  NOT NULL DEFAULT 'ALL',
+    sent_by         CHAR(36),
+    sent_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (announcement_id),
+    FOREIGN KEY (sent_by) REFERENCES users(user_id)
+);
+
 -- PROVIDER LIVE LOCATIONS
 CREATE TABLE IF NOT EXISTS provider_locations (
     provider_id     CHAR(36) PRIMARY KEY,

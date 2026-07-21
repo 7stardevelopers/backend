@@ -1,5 +1,10 @@
 from admin.admin_modal import AdminMaster
-from admin.admin_validator import UpdateBookingSchema, CreateServiceAdminSchema, CreateSubCategorySchema
+from admin.admin_validator import (
+    UpdateBookingSchema, CreateServiceAdminSchema, CreateSubCategorySchema,
+    CreateCategorySchema, UpdateCategorySchema,
+    CreateSubscriptionPlanSchema, UpdateSubscriptionPlanSchema,
+    SendAnnouncementSchema,
+)
 
 
 class AdminService:
@@ -80,3 +85,165 @@ class AdminService:
             modal.create_sub_service(connection, sc_id, service_id, item.model_dump())
             items_created += 1
         return "created", {"sub_category_id": sc_id, "items_created": items_created}
+
+    # ── NEW METHODS (additive) ───────────────────────────────────────
+
+    def dashboard_overview(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        return "success", self.modal.dashboard_overview(connection)
+
+    def list_bookings_detailed(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        status   = obj.get("status")
+        page     = int(obj.get("page", 1))
+        per_page = int(obj.get("per_page", 20))
+        return "success", self.modal.list_bookings_detailed(connection, status, page, per_page)
+
+    def list_users_detailed(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        page     = int(obj.get("page", 1))
+        per_page = int(obj.get("per_page", 20))
+        search   = obj.get("search")
+        return "success", self.modal.list_users_detailed(connection, page, per_page, search)
+
+    def list_all_services(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        return "success", self.modal.list_all_services(connection)
+
+    def list_payments(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        status   = obj.get("status")
+        page     = int(obj.get("page", 1))
+        per_page = int(obj.get("per_page", 20))
+        return "success", self.modal.list_payments(connection, status, page, per_page)
+
+    def list_reviews(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        rating   = obj.get("rating")
+        page     = int(obj.get("page", 1))
+        per_page = int(obj.get("per_page", 20))
+        return "success", self.modal.list_reviews_detailed(connection, rating, page, per_page)
+
+    def create_category(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        data   = CreateCategorySchema(**obj).model_dump()
+        result = self.modal.create_category(connection, data)
+        return "created", result
+
+    def update_category(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        category_id = obj.pop("id")
+        fields = UpdateCategorySchema(**obj).model_dump(exclude_none=True)
+        self.modal.update_category(connection, category_id, fields)
+        return "success", {"message": "Category updated"}
+
+    def list_subscription_plans_all(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        page     = int(obj.get("page", 1))
+        per_page = int(obj.get("per_page", 20))
+        return "success", self.modal.list_subscription_plans_all(connection, page, per_page)
+
+    def create_subscription_plan(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        data   = CreateSubscriptionPlanSchema(**obj).model_dump()
+        result = self.modal.create_subscription_plan(connection, data)
+        return "created", result
+
+    def update_subscription_plan(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        plan_id = obj.pop("id")
+        fields  = UpdateSubscriptionPlanSchema(**obj).model_dump(exclude_none=True)
+        self.modal.update_subscription_plan(connection, plan_id, fields)
+        return "success", {"message": "Plan updated"}
+
+    def send_announcement(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        user_id = obj.pop("_user_id", None)
+        data    = SendAnnouncementSchema(**obj).model_dump()
+        data["sent_by"] = user_id
+
+        self.modal.create_announcement(connection, data)
+
+        from sqlalchemy import text
+        target = data["target_role"]
+        if target == "ALL":
+            sql = "SELECT user_id FROM users WHERE role IN ('CUSTOMER','PROVIDER')"
+            rows = connection.execute(text(sql)).fetchall()
+        else:
+            sql = "SELECT user_id FROM users WHERE role = :r"
+            rows = connection.execute(text(sql), {"r": target}).fetchall()
+        user_ids = [r[0] for r in rows]
+
+        try:
+            from notifications.notifications_service import NotificationsService
+            NotificationsService().send_push(
+                connection=connection,
+                user_ids=user_ids,
+                title=data["title"],
+                body=data["body"],
+            )
+        except Exception:
+            pass
+
+        return "success", {"message": f"Announcement sent to {len(user_ids)} users"}
+
+    def list_announcements(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        limit = int(obj.get("limit", 50))
+        return "success", self.modal.list_announcements(connection, limit)
+
+    def list_logs(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        page     = int(obj.get("page", 1))
+        per_page = int(obj.get("per_page", 20))
+        search   = obj.get("search")
+        return "success", self.modal.list_logs(connection, page, per_page, search)
+
+    # ── LOGGING WRAPPERS ─────────────────────────────────────────────
+    # Call the original untouched method, then write an activity log row.
+
+    def approve_provider_logged(self, obj, connection):
+        user_id     = obj.get("_user_id")
+        provider_id = obj.get("id")
+        from providers.providers_service import ProvidersService
+        result = ProvidersService().admin_approve(obj, connection)
+        try:
+            self.modal.write_log(connection, user_id, "APPROVE_PROVIDER", "provider", provider_id)
+        except Exception:
+            pass
+        return result
+
+    def suspend_provider_logged(self, obj, connection):
+        user_id     = obj.get("_user_id")
+        provider_id = obj.get("id")
+        from providers.providers_service import ProvidersService
+        result = ProvidersService().admin_suspend(obj, connection)
+        try:
+            self.modal.write_log(connection, user_id, "SUSPEND_PROVIDER", "provider", provider_id)
+        except Exception:
+            pass
+        return result
+
+    def delete_review_logged(self, obj, connection):
+        user_id   = obj.get("_user_id")
+        review_id = obj.get("id")
+        from reviews.reviews_service import ReviewsService
+        result = ReviewsService().admin_delete(obj, connection)
+        try:
+            self.modal.write_log(connection, user_id, "DELETE_REVIEW", "review", review_id)
+        except Exception:
+            pass
+        return result
