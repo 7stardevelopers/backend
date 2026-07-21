@@ -56,15 +56,6 @@ class ReviewsService:
         reviews = self.modal.list_for_provider(connection, provider_id, page)
         return "success", reviews
 
-    def list_all(self, obj, connection):
-        role = obj.pop("_role", None)
-        obj.pop("_user_id", None)
-        if role != "ADMIN":
-            raise PermissionError("Admin role required")
-        page = int(obj.get("page", 1))
-        reviews = self.modal.list_all(connection, page)
-        return "success", reviews
-
     def admin_delete(self, obj, connection):
         role = obj.pop("_role", None)
         obj.pop("_user_id", None)

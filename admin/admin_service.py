@@ -40,20 +40,6 @@ class AdminService:
         users = self.modal.list_users(connection, page=page)
         return "success", users
 
-    def list_logs(self, obj, connection):
-        self._require_admin(obj.pop("_role", None))
-        obj.pop("_user_id", None)
-        page = int(obj.get("page", 1))
-        logs = self.modal.list_logs(connection, page=page)
-        return "success", logs
-
-    def list_announcements(self, obj, connection):
-        self._require_admin(obj.pop("_role", None))
-        obj.pop("_user_id", None)
-        page = int(obj.get("page", 1))
-        announcements = self.modal.list_announcements(connection, page=page)
-        return "success", announcements
-
     def create_service(self, obj, connection):
         self._require_admin(obj.pop("_role", None))
         obj.pop("_user_id", None)

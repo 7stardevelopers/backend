@@ -44,7 +44,6 @@ class AuthorizationService:
         otp_hash = hashlib.sha256(otp.encode()).hexdigest()
         r.setex(f"otp:{phone}", OTP_TTL, otp_hash)
 
-        print(f"[OTP] Generated OTP for {phone}: {otp}")
         self._send_sms(phone, otp)
         return "success", {"message": "OTP sent", "phone": phone}
 

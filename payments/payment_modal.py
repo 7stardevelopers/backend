@@ -49,13 +49,6 @@ class PaymentMaster:
     def update_payout(self, conn, payout_id: str, fields: dict):
         conn.execute(self.payout.update().where(self.payout.c.payout_id == payout_id).values(**fields))
 
-    def list_all_payments(self, conn, status=None, page=1):
-        sel = self.pay.select().order_by(self.pay.c.created_at.desc()).limit(20).offset((page-1)*20)
-        if status:
-            sel = sel.where(self.pay.c.status == status)
-        rows = conn.execute(sel).fetchall()
-        return [dict(r._mapping) for r in rows]
-
     def add_earning(self, conn, provider_id: str, booking_id: str, amount: int, earning_type: str = "BOOKING"):
         conn.execute(self.earnings.insert().values(
             earning_id=new_uuid(),
