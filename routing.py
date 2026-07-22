@@ -100,6 +100,7 @@ ROUTES = [
     ("PATCH","/providers/me/documents",     _prov.set_documents,         []),
     ("PATCH","/providers/me/availability",  _prov.toggle_availability,   []),
     ("PATCH","/providers/me/location",      _prov.update_location,       []),
+    ("GET",  "/providers/me/earnings",      _prov.get_my_earnings,       []),
     ("GET",  "/providers/nearby",           _prov.get_nearby,            []),
     ("GET",  "/providers",                  _prov.admin_list_detailed,   []),
     ("GET",  r"/providers/(?P<id>[^/]+)$",  _prov.get_public_profile,    ["id"]),

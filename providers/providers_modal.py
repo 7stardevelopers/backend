@@ -109,6 +109,26 @@ class ProvidersMaster:
                 "UPDATE providers SET wallet_balance = wallet_balance - :amt WHERE provider_id = :pid"
             ), {"amt": amount, "pid": provider_id})
 
+    def get_earnings(self, conn, provider_id: str) -> dict:
+        rows = conn.execute(text("""
+            SELECT earning_id, booking_id, amount, type, created_at
+            FROM provider_earnings
+            WHERE provider_id = :pid
+            ORDER BY created_at DESC
+            LIMIT 100
+        """), {"pid": provider_id}).mappings().fetchall()
+
+        stats = dict(conn.execute(text("""
+            SELECT
+              COALESCE(SUM(CASE WHEN type != 'DEDUCTION' THEN amount ELSE 0 END), 0) AS total_earned,
+              COALESCE(SUM(CASE WHEN type = 'DEDUCTION'  THEN amount ELSE 0 END), 0) AS total_deducted,
+              COUNT(*) AS total_entries
+            FROM provider_earnings
+            WHERE provider_id = :pid
+        """), {"pid": provider_id}).mappings().one())
+
+        return {"items": [dict(r) for r in rows], "stats": stats}
+
     def list_all_detailed(self, conn, status=None, page=1, per_page=20):
         where  = "WHERE p.status = :status" if status else ""
         params = {"lim": per_page, "off": (page - 1) * per_page}
