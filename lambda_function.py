@@ -39,8 +39,11 @@ def handle_rest(event, context):
         code = {"success": 200, "created": 201}.get(status, 400)
         return response(code, {"status": status, "data": data})
     except PermissionError as e:
-        print(f"[FORBIDDEN] {method} {path}: {e}")
-        return response(403, {"status": "error", "message": str(e)})
+        msg = str(e)
+        print(f"[FORBIDDEN] {method} {path}: {msg}")
+        # Token errors are authentication failures (401), not authorisation (403)
+        code = 401 if msg in ("Token expired", "Invalid token") else 403
+        return response(code, {"status": "error", "message": msg})
     except ValueError as e:
         print(f"[BAD_REQUEST] {method} {path}: {e}")
         return response(400, {"status": "error", "message": str(e)})
