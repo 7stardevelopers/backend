@@ -32,9 +32,10 @@ class DocumentsService:
 
         ext = ALLOWED_CONTENT_TYPES[content_type]
         bucket = os.environ.get("S3_DOCUMENTS_BUCKET", "7starexperts-documents-staging")
+        bucket_region = os.environ.get("S3_DOCUMENTS_BUCKET_REGION", "us-east-1")
         key = f"providers/{provider['provider_id']}/{doc_type}{ext}"
 
-        s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION_NAME", "ap-south-1"))
+        s3 = boto3.client("s3", region_name=bucket_region)
         url = s3.generate_presigned_url(
             "put_object",
             Params={"Bucket": bucket, "Key": key, "ContentType": content_type},
@@ -44,7 +45,7 @@ class DocumentsService:
         doc = self.modal.create(connection, {
             "provider_id": provider["provider_id"],
             "doc_type": doc_type,
-            "file_url": f"https://{bucket}.s3.ap-south-1.amazonaws.com/{key}",
+            "file_url": f"https://{bucket}.s3.{bucket_region}.amazonaws.com/{key}",
             "status": "PENDING",
         })
 
