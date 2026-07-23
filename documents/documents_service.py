@@ -1,5 +1,6 @@
 import os
 import boto3
+from botocore.client import Config
 
 from documents.documents_modal import DocumentsMaster
 from documents.documents_config import ALLOWED_DOC_TYPES, ALLOWED_CONTENT_TYPES, MAX_FILE_SIZE_BYTES, UPLOAD_URL_EXPIRY_SECS
@@ -32,10 +33,10 @@ class DocumentsService:
 
         ext = ALLOWED_CONTENT_TYPES[content_type]
         bucket = os.environ.get("S3_DOCUMENTS_BUCKET", "7starexperts-documents-staging")
-        bucket_region = os.environ.get("S3_DOCUMENTS_BUCKET_REGION", "us-east-1")
+        bucket_region = os.environ.get("S3_DOCUMENTS_BUCKET_REGION") or os.environ.get("AWS_REGION_NAME", "ap-south-1")
         key = f"providers/{provider['provider_id']}/{doc_type}{ext}"
 
-        s3 = boto3.client("s3", region_name=bucket_region)
+        s3 = boto3.client("s3", region_name=bucket_region, config=Config(signature_version='s3v4'))
         url = s3.generate_presigned_url(
             "put_object",
             Params={"Bucket": bucket, "Key": key, "ContentType": content_type},
