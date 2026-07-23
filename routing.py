@@ -60,8 +60,10 @@ ROUTES = [
 
     # BOOKINGS
     ("POST", "/bookings",                   _books.create,               []),
-    ("GET",  "/bookings",                   _books.list_mine,            []),
-    ("GET",  r"/bookings/(?P<id>[^/]+)$",   _books.get_detail,           ["id"]),
+    ("GET",  "/bookings",                        _books.list_mine,                 []),
+    ("GET",  "/bookings/available",              _books.list_available_for_provider, []),
+    ("PATCH",r"/bookings/(?P<id>[^/]+)/accept",  _books.accept_booking,             ["id"]),
+    ("GET",  r"/bookings/(?P<id>[^/]+)$",        _books.get_detail,                 ["id"]),
     ("PATCH",r"/bookings/(?P<id>[^/]+)/status", _books.update_status,    ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/cancel",  _books.cancel,          ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/otp-verify", _books.verify_door_otp, ["id"]),
@@ -140,6 +142,7 @@ ROUTES = [
     # PLACES
     ("GET",  "/places/autocomplete",        _places.autocomplete,        []),
     ("GET",  "/places/details",             _places.details,             []),
+    ("GET",  "/places/reverse-geocode",     _places.reverse_geocode,     []),
 
     # ADMIN
     ("GET",  "/admin/dashboard",            _admin.dashboard_overview,        []),

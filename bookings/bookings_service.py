@@ -10,6 +10,7 @@ from coupons.coupons_modal import CouponsMaster
 from notifications.notifications_service import NotificationsService
 from payments.payment_modal import PaymentMaster
 from providers.provider_matching import match_provider
+from providers.providers_modal import ProvidersMaster
 from subscriptions.subscriptions_modal import SubscriptionsMaster
 from utilities.common_table_elements import new_uuid, now_utc
 from utilities.db_connection import get_table
@@ -143,6 +144,56 @@ class BookingsService:
         if role not in ("ADMIN", "SUPPORT") and str(booking.get("customer_id")) != str(user_id) and str(booking.get("provider_id")) != str(user_id):
             raise PermissionError("Access denied")
         booking["items"] = self.modal.get_items(connection, booking_id)
+        return "success", booking
+
+    def list_available_for_provider(self, obj, connection):
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        if role != "PROVIDER":
+            raise PermissionError("Provider role required")
+        prov_master = ProvidersMaster()
+        provider = prov_master.find_by_user_id(connection, user_id)
+        if not provider:
+            return "success", []
+
+        lat = obj.get("lat")
+        lng = obj.get("lng")
+        if lat is not None and lng is not None:
+            try:
+                lat, lng = float(lat), float(lng)
+                prov_master.upsert_location(connection, provider["provider_id"], lat, lng)
+            except (TypeError, ValueError):
+                lat = lng = None
+
+        if lat is None:
+            loc = prov_master.get_location(connection, provider["provider_id"])
+            if loc and loc.get("lat"):
+                lat = float(loc["lat"])
+                lng = float(loc["lng"])
+
+        bookings = self.modal.get_available_for_provider(connection, provider["provider_id"], lat, lng)
+        return "success", bookings
+
+    def accept_booking(self, obj, connection):
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        if role != "PROVIDER":
+            raise PermissionError("Provider role required")
+        booking_id = obj.get("id")
+        provider = ProvidersMaster().find_by_user_id(connection, user_id)
+        if not provider:
+            raise ValueError("Provider profile not found")
+        claimed = self.modal.claim_booking(connection, booking_id, provider["provider_id"])
+        if not claimed:
+            raise ValueError("Booking is no longer available — another provider may have accepted it")
+        booking = self.modal.read_one(connection, booking_id)
+        self.notif.send_push(
+            connection=connection,
+            user_ids=[booking["customer_id"]],
+            title="Expert on the way!",
+            body="Your booking has been accepted. The expert is on the way.",
+            data={"type": "booking_accepted", "booking_id": booking_id},
+        )
         return "success", booking
 
     def update_status(self, obj, connection):
