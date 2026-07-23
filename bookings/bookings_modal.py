@@ -105,10 +105,20 @@ class BookingsMaster:
         )
 
     def get_available_for_provider(self, conn, provider_id: str, lat=None, lng=None) -> list:
+        # Pull coords from snapshot first, fall back to user_addresses table
         rows = conn.execute(text("""
-            SELECT b.*
+            SELECT b.*,
+                   COALESCE(
+                       JSON_UNQUOTE(JSON_EXTRACT(b.address_snapshot, '$.lat')),
+                       ua.lat
+                   ) AS _lat,
+                   COALESCE(
+                       JSON_UNQUOTE(JSON_EXTRACT(b.address_snapshot, '$.lng')),
+                       ua.lng
+                   ) AS _lng
             FROM bookings b
             JOIN provider_services ps ON b.service_id = ps.service_id
+            LEFT JOIN user_addresses ua ON ua.address_id = b.address_id
             WHERE b.status = 'PENDING'
               AND b.provider_id IS NULL
               AND ps.provider_id = :pid
@@ -118,20 +128,19 @@ class BookingsMaster:
         bookings = [dict(r._mapping) for r in rows.fetchall()]
 
         if lat is None or lng is None:
+            # No worker coords — strip internal fields and return all
+            for b in bookings:
+                b.pop("_lat", None)
+                b.pop("_lng", None)
             return bookings[:20]
 
         result = []
         for b in bookings:
-            snap = b.get("address_snapshot") or {}
-            if isinstance(snap, str):
-                try:
-                    snap = json.loads(snap)
-                except Exception:
-                    snap = {}
-            b_lat = snap.get("lat")
-            b_lng = snap.get("lng")
+            b_lat = b.pop("_lat", None)
+            b_lng = b.pop("_lng", None)
             if b_lat is None or b_lng is None:
-                result.append(b)  # no coords yet — don't exclude
+                # Booking has no location at all — include it anyway
+                result.append(b)
             elif _haversine_km(lat, lng, float(b_lat), float(b_lng)) <= 20:
                 result.append(b)
         return result[:20]

@@ -144,6 +144,15 @@ class BookingsService:
         if role not in ("ADMIN", "SUPPORT") and str(booking.get("customer_id")) != str(user_id) and str(booking.get("provider_id")) != str(user_id):
             raise PermissionError("Access denied")
         booking["items"] = self.modal.get_items(connection, booking_id)
+        # Attach provider's live location so the customer tracking screen has an initial position
+        if booking.get("provider_id"):
+            try:
+                loc = ProvidersMaster().get_location(connection, booking["provider_id"])
+                if loc:
+                    booking["provider_lat"] = float(loc["lat"]) if loc.get("lat") else None
+                    booking["provider_lng"] = float(loc["lng"]) if loc.get("lng") else None
+            except Exception:
+                pass
         return "success", booking
 
     def list_available_for_provider(self, obj, connection):

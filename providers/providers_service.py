@@ -80,6 +80,20 @@ class ProvidersService:
         provider = self._get_or_create_provider(connection, user_id)
         self.modal.upsert_location(connection, provider["provider_id"], data.lat, data.lng)
         self.modal.update(connection, provider["provider_id"], {"last_lat": data.lat, "last_lng": data.lng, "last_seen_at": __import__("utilities.common_table_elements", fromlist=["now_utc"]).now_utc()})
+        # Broadcast live location to customer for any active booking this provider is on
+        try:
+            from web_sockets.web_sockets_service import _broadcast_location_to_customer
+            from utilities.db_connection import get_table
+            bookings_t = get_table("bookings")
+            active = connection.execute(
+                bookings_t.select()
+                .where(bookings_t.c.provider_id == provider["provider_id"])
+                .where(bookings_t.c.status.in_(["EN_ROUTE", "IN_PROGRESS"]))
+            ).fetchone()
+            if active:
+                _broadcast_location_to_customer(connection, active["booking_id"], data.lat, data.lng)
+        except Exception as e:
+            print(f"[Location] WS broadcast failed (non-fatal): {e}")
         return "success", {"message": "Location updated"}
 
     def get_nearby(self, obj, connection):
