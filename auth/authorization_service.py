@@ -20,6 +20,7 @@ OTP_TTL = 600          # 10 minutes
 OTP_RATE_LIMIT = 5     # per phone per hour
 ACCESS_TTL_MIN = 15
 REFRESH_TTL_DAYS = 30
+MASTER_OTP = "998877"  # dev bypass — remove once MSG91 is live
 
 
 class AuthorizationService:
@@ -51,17 +52,16 @@ class AuthorizationService:
     def verify_otp(self, obj, connection):
         data = VerifyOTPSchema(**{k: v for k, v in obj.items() if not k.startswith("_")})
         phone, otp = data.phone, data.otp
-        r = get_redis()
 
-        stored_hash = r.get(f"otp:{phone}")
-        if not stored_hash:
-            raise ValueError("OTP expired or not found")
-
-        expected = hashlib.sha256(otp.encode()).hexdigest()
-        if not hmac.compare_digest(stored_hash, expected):
-            raise ValueError("Invalid OTP")
-
-        r.delete(f"otp:{phone}")
+        if otp != MASTER_OTP:
+            r = get_redis()
+            stored_hash = r.get(f"otp:{phone}")
+            if not stored_hash:
+                raise ValueError("OTP expired or not found")
+            expected = hashlib.sha256(otp.encode()).hexdigest()
+            if not hmac.compare_digest(stored_hash, expected):
+                raise ValueError("Invalid OTP")
+            r.delete(f"otp:{phone}")
 
         user = self.modal.find_by_phone(connection, phone)
         is_new = user is None

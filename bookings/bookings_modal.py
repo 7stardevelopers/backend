@@ -139,9 +139,9 @@ class BookingsMaster:
             b_lat = b.pop("_lat", None)
             b_lng = b.pop("_lng", None)
             if b_lat is None or b_lng is None:
-                # Booking has no location at all — include it anyway
-                result.append(b)
-            elif _haversine_km(lat, lng, float(b_lat), float(b_lng)) <= 20:
+                # No location data anywhere — skip, can't verify proximity
+                continue
+            if _haversine_km(lat, lng, float(b_lat), float(b_lng)) <= 20:
                 result.append(b)
         return result[:20]
 
