@@ -33,7 +33,7 @@ class DocumentsService:
 
         ext = ALLOWED_CONTENT_TYPES[content_type]
         bucket = os.environ.get("S3_DOCUMENTS_BUCKET", "7starexperts-documents-staging")
-        bucket_region = os.environ.get("S3_DOCUMENTS_BUCKET_REGION") or os.environ.get("AWS_REGION_NAME", "ap-south-1")
+        bucket_region = os.environ.get("AWS_REGION_NAME", "ap-south-1")
         key = f"providers/{provider['provider_id']}/{doc_type}{ext}"
 
         s3 = boto3.client("s3", region_name=bucket_region, config=Config(signature_version='s3v4'))
