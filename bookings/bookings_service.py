@@ -92,21 +92,32 @@ class BookingsService:
         if validated.items:
             self.modal.create_items(connection, booking["booking_id"], validated.items)
 
+        # Notify nearby available providers — booking stays PENDING, first to accept gets it
         try:
-            provider = match_provider(connection, booking)
-            if provider:
-                self.modal.assign_provider(connection, booking["booking_id"], provider["provider_id"])
-                booking["provider_id"] = provider["provider_id"]
-                booking["status"] = "ACCEPTED"
+            from providers.provider_matching import haversine
+            addr = booking.get("address_snapshot") or {}
+            b_lat = addr.get("lat")
+            b_lng = addr.get("lng")
+            candidates = ProvidersMaster().get_available_for_service(connection, booking["service_id"])
+            nearby_user_ids = []
+            for p in candidates:
+                p_lat = p.get("last_lat")
+                p_lng = p.get("last_lng")
+                if p_lat and p_lng and b_lat and b_lng:
+                    if haversine(float(b_lat), float(b_lng), float(p_lat), float(p_lng)) <= 20:
+                        nearby_user_ids.append(p["user_id"])
+                else:
+                    nearby_user_ids.append(p["user_id"])
+            if nearby_user_ids:
                 self.notif.send_push(
                     connection=connection,
-                    user_ids=[provider["user_id"]],
-                    title="New job request",
-                    body=f"New booking assigned to you",
-                    data={"type": "job_request", "booking_id": booking["booking_id"]},
+                    user_ids=nearby_user_ids,
+                    title="New Job Near You",
+                    body="A new job is available in your area. Tap to view.",
+                    data={"type": "job_available", "booking_id": booking["booking_id"]},
                 )
         except Exception as e:
-            print(f"[Matching] non-fatal: {e}")
+            print(f"[Notify] nearby push failed (non-fatal): {e}")
 
         self.notif.send_push(
             connection=connection,
@@ -128,7 +139,10 @@ class BookingsService:
         if role == "CUSTOMER":
             filters["customer_id"] = user_id
         elif role == "PROVIDER":
-            filters["provider_id"] = user_id
+            provider = ProvidersMaster().find_by_user_id(connection, user_id)
+            if not provider:
+                return "success", []
+            filters["provider_id"] = provider["provider_id"]
         elif role in ("ADMIN", "SUPPORT"):
             pass
         else:
@@ -144,13 +158,34 @@ class BookingsService:
         if role not in ("ADMIN", "SUPPORT") and str(booking.get("customer_id")) != str(user_id) and str(booking.get("provider_id")) != str(user_id):
             raise PermissionError("Access denied")
         booking["items"] = self.modal.get_items(connection, booking_id)
-        # Attach provider's live location so the customer tracking screen has an initial position
         if booking.get("provider_id"):
             try:
+                from sqlalchemy import text as _text
+                row = connection.execute(_text("""
+                    SELECT u.name, u.phone, p.avg_rating, p.total_reviews
+                    FROM providers p
+                    JOIN users u ON u.user_id = p.user_id
+                    WHERE p.provider_id = :pid
+                """), {"pid": booking["provider_id"]}).fetchone()
+                if row:
+                    booking["provider_name"]  = row["name"]
+                    booking["provider_phone"] = row["phone"]
+                    booking["provider_rating"] = float(row["avg_rating"] or 0)
                 loc = ProvidersMaster().get_location(connection, booking["provider_id"])
                 if loc:
                     booking["provider_lat"] = float(loc["lat"]) if loc.get("lat") else None
                     booking["provider_lng"] = float(loc["lng"]) if loc.get("lng") else None
+            except Exception:
+                pass
+        if booking.get("customer_id"):
+            try:
+                from sqlalchemy import text as _text
+                row = connection.execute(_text(
+                    "SELECT name, phone FROM users WHERE user_id = :uid"
+                ), {"uid": booking["customer_id"]}).fetchone()
+                if row:
+                    booking["customer_name"]  = row["name"]
+                    booking["customer_phone"] = row["phone"]
             except Exception:
                 pass
         return "success", booking
