@@ -80,6 +80,26 @@ class DocumentsService:
         docs = self.modal.list_by_provider(connection, provider_id)
         return "success", docs
 
+    def admin_fetch_content(self, obj, connection):
+        role = obj.pop("_role", None)
+        obj.pop("_user_id", None)
+        if role != "ADMIN":
+            raise PermissionError("Admin role required")
+        document_id = obj.get("id")
+        doc = self.modal.get_one(connection, document_id)
+        if not doc:
+            raise ValueError("Document not found")
+        bucket = os.environ.get("S3_DOCUMENTS_BUCKET", "7starexperts-documents-staging")
+        bucket_region = os.environ.get("AWS_REGION_NAME", "ap-south-1")
+        prefix = f"https://{bucket}.s3.{bucket_region}.amazonaws.com/"
+        key = doc["file_url"].replace(prefix, "")
+        s3 = boto3.client("s3", region_name=bucket_region)
+        response = s3.get_object(Bucket=bucket, Key=key)
+        file_bytes = response["Body"].read()
+        content_type = response.get("ContentType", "image/jpeg")
+        file_b64 = base64.b64encode(file_bytes).decode("utf-8")
+        return "success", {"content_type": content_type, "file_content": file_b64}
+
     def admin_verify(self, obj, connection):
         role = obj.pop("_role", None)
         admin_user_id = obj.pop("_user_id", None)

@@ -111,7 +111,8 @@ ROUTES = [
     ("POST", "/documents/upload",           _docs.upload,                []),
     ("GET",  "/documents/mine",             _docs.list_mine,             []),
     ("GET",  r"/documents/(?P<providerId>[^/]+)$", _docs.admin_list,     ["providerId"]),
-    ("PATCH",r"/documents/(?P<id>[^/]+)/verify", _docs.admin_verify,     ["id"]),
+    ("GET",  r"/documents/(?P<id>[^/]+)/content", _docs.admin_fetch_content, ["id"]),
+    ("PATCH",r"/documents/(?P<id>[^/]+)/verify",  _docs.admin_verify,       ["id"]),
 
     # SUPPORT
     ("POST", "/support/tickets",            _supp.create_ticket,         []),
