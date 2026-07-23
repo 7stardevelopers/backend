@@ -108,8 +108,7 @@ ROUTES = [
     ("PATCH",r"/providers/(?P<id>[^/]+)/suspend",  _admin.suspend_provider_logged, ["id"]),
 
     # DOCUMENTS
-    ("POST", "/documents/upload-url",       _docs.generate_upload_url,   []),
-    ("POST", "/documents/confirm",          _docs.confirm_upload,        []),
+    ("POST", "/documents/upload",           _docs.upload,                []),
     ("GET",  "/documents/mine",             _docs.list_mine,             []),
     ("GET",  r"/documents/(?P<providerId>[^/]+)$", _docs.admin_list,     ["providerId"]),
     ("PATCH",r"/documents/(?P<id>[^/]+)/verify", _docs.admin_verify,     ["id"]),
