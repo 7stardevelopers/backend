@@ -38,6 +38,13 @@ class ReviewsMaster:
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
+    def list_all(self, conn, page: int = 1):
+        sel = self.r.select().where(self.r.c.is_deleted == False).order_by(
+            self.r.c.created_at.desc()
+        ).limit(20).offset((page-1)*20)
+        rows = conn.execute(sel).fetchall()
+        return [dict(r._mapping) for r in rows]
+
     def soft_delete(self, conn, review_id: str):
         conn.execute(self.r.update().where(self.r.c.review_id == review_id).values(is_deleted=True))
 

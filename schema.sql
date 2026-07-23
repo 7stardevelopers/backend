@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS providers (
     wallet_balance      INTEGER DEFAULT 0,
     bank_account_number VARCHAR(30),
     bank_ifsc           VARCHAR(15),
+    bank_account_name   VARCHAR(100),
     bio                 TEXT,
     years_experience    INTEGER DEFAULT 0,
     created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

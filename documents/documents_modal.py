@@ -31,4 +31,4 @@ class DocumentsMaster:
         conn.execute(self.d.delete().where(
             (self.d.c.provider_id == provider_id) & (self.d.c.doc_type == doc_type)
         ))
-        self.create(conn, {"provider_id": provider_id, "doc_type": doc_type, "file_url": file_url})
+        return self.create(conn, {"provider_id": provider_id, "doc_type": doc_type, "file_url": file_url})

@@ -20,6 +20,14 @@ class AdminMaster:
     def providers(self):
         return get_table("providers")
 
+    @property
+    def log_table(self):
+        return get_table("activity_log")
+
+    @property
+    def announcements_table(self):
+        return get_table("in_app_notifications")
+
     def get_dashboard_stats(self, conn) -> dict:
         total_users = conn.execute(text("SELECT COUNT(*) FROM users WHERE role='CUSTOMER'")).scalar()
         total_providers = conn.execute(text("SELECT COUNT(*) FROM providers")).scalar()

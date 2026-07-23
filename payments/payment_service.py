@@ -125,6 +125,16 @@ class PaymentService:
         })
         return "created", payout
 
+    def list_all(self, obj, connection):
+        role = obj.pop("_role", None)
+        obj.pop("_user_id", None)
+        if role != "ADMIN":
+            raise PermissionError("Admin role required")
+        status = obj.get("status")
+        page = int(obj.get("page", 1))
+        payments = self.modal.list_all_payments(connection, status=status, page=page)
+        return "success", payments
+
     def request_refund(self, obj, connection):
         user_id = obj.pop("_user_id")
         role = obj.pop("_role", None)

@@ -1,5 +1,6 @@
 import os
 import boto3
+from botocore.client import Config
 from utilities.common_table_elements import new_uuid
 from documents.documents_config import ALLOWED_CONTENT_TYPES
 
@@ -23,15 +24,15 @@ class MediaService:
 
         ext = ALLOWED_CONTENT_TYPES[content_type]
         bucket = os.environ.get("S3_MEDIA_BUCKET", "7starexperts-media-staging")
+        bucket_region = os.environ.get("AWS_REGION_NAME", "ap-south-1")
         key = f"{folder}/{new_uuid()}{ext}"
-        region = os.environ.get("AWS_REGION_NAME", "ap-south-1")
 
-        s3 = boto3.client("s3", region_name=region, endpoint_url=f"https://s3.{region}.amazonaws.com")
+        s3 = boto3.client("s3", region_name=bucket_region, config=Config(signature_version='s3v4'))
         upload_url = s3.generate_presigned_url(
             "put_object",
             Params={"Bucket": bucket, "Key": key, "ContentType": content_type},
             ExpiresIn=300,
         )
-        object_url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
+        object_url = f"https://{bucket}.s3.{bucket_region}.amazonaws.com/{key}"
 
         return "success", {"upload_url": upload_url, "object_url": object_url}

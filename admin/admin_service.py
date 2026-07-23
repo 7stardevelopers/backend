@@ -45,6 +45,43 @@ class AdminService:
         users = self.modal.list_users(connection, page=page)
         return "success", users
 
+    def list_logs(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        page = int(obj.get("page", 1))
+        logs = self.modal.list_logs(connection, page=page)
+        return "success", logs
+
+    def list_announcements(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        page = int(obj.get("page", 1))
+        announcements = self.modal.list_announcements(connection, page=page)
+        return "success", announcements
+
+    def list_services(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        from services_catalog.services_modal import ServicesMaster
+        category_id = obj.get("categoryId") or obj.get("category_id")
+        services = ServicesMaster().list_services_admin(connection, category_id)
+        return "success", services
+
+    def list_categories(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        from services_catalog.services_modal import ServicesMaster
+        categories = ServicesMaster().list_categories_admin(connection)
+        return "success", categories
+
+    def create_category(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        from services_catalog.services_modal import ServicesMaster
+        data = CreateCategorySchema(**obj)
+        result = ServicesMaster().create_category(connection, data.model_dump())
+        return "created", result
+
     def create_service(self, obj, connection):
         self._require_admin(obj.pop("_role", None))
         obj.pop("_user_id", None)

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
+from typing import Literal, Optional
 import re
 
 
@@ -18,6 +18,7 @@ class SendOTPSchema(BaseModel):
 class VerifyOTPSchema(BaseModel):
     phone: str = Field(..., min_length=10, max_length=13)
     otp: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+    role: Literal["CUSTOMER", "PROVIDER"] = "CUSTOMER"
 
     @field_validator("phone")
     @classmethod

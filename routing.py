@@ -78,6 +78,7 @@ ROUTES = [
     ("POST", "/payments/verify",            _pay.verify_payment,         []),
     ("POST", "/payments/payout-request",    _pay.payout_request,         []),
     ("POST", "/payments/refund",            _pay.request_refund,         []),
+    ("GET",  "/payments",                   _pay.list_all,               []),
 
     # COUPONS
     ("POST", "/coupons/validate",           _coupons.validate,           []),
@@ -89,6 +90,7 @@ ROUTES = [
     ("POST", "/reviews",                    _rev.create,                 []),
     ("GET",  r"/reviews/service/(?P<id>[^/]+)", _rev.list_for_service,   ["id"]),
     ("GET",  r"/reviews/provider/(?P<id>[^/]+)", _rev.list_for_provider, ["id"]),
+    ("GET",  "/reviews",                    _rev.list_all,               []),
     ("DELETE",r"/reviews/(?P<id>[^/]+)",    _admin.delete_review_logged, ["id"]),
 
     # PROVIDERS
@@ -98,6 +100,7 @@ ROUTES = [
     ("PATCH","/providers/me/documents",     _prov.set_documents,         []),
     ("PATCH","/providers/me/availability",  _prov.toggle_availability,   []),
     ("PATCH","/providers/me/location",      _prov.update_location,       []),
+    ("GET",  "/providers/me/earnings",      _prov.get_my_earnings,       []),
     ("GET",  "/providers/nearby",           _prov.get_nearby,            []),
     ("GET",  "/providers",                  _prov.admin_list_detailed,   []),
     ("GET",  r"/providers/(?P<id>[^/]+)$",  _prov.get_public_profile,    ["id"]),
@@ -105,11 +108,11 @@ ROUTES = [
     ("PATCH",r"/providers/(?P<id>[^/]+)/suspend",  _admin.suspend_provider_logged, ["id"]),
 
     # DOCUMENTS
-    ("POST", "/documents/upload-url",       _docs.generate_upload_url,   []),
-    ("POST", "/documents/confirm",          _docs.confirm_upload,        []),
+    ("POST", "/documents/upload",           _docs.upload,                []),
     ("GET",  "/documents/mine",             _docs.list_mine,             []),
     ("GET",  r"/documents/(?P<providerId>[^/]+)$", _docs.admin_list,     ["providerId"]),
-    ("PATCH",r"/documents/(?P<id>[^/]+)/verify", _docs.admin_verify,     ["id"]),
+    ("GET",  r"/documents/(?P<id>[^/]+)/content", _docs.admin_fetch_content, ["id"]),
+    ("PATCH",r"/documents/(?P<id>[^/]+)/verify",  _docs.admin_verify,       ["id"]),
 
     # SUPPORT
     ("POST", "/support/tickets",            _supp.create_ticket,         []),
@@ -121,6 +124,8 @@ ROUTES = [
 
     # SUBSCRIPTIONS
     ("GET",  "/subscriptions/plans",        _subs.list_plans,            []),
+    ("POST", "/subscriptions/plans",        _subs.admin_create_plan,     []),
+    ("PATCH",r"/subscriptions/plans/(?P<id>[^/]+)", _subs.admin_update_plan, ["id"]),
     ("POST", "/subscriptions/subscribe",    _subs.subscribe,             []),
     ("GET",  "/subscriptions/mine",         _subs.get_mine,              []),
     ("POST", "/subscriptions/cancel",       _subs.cancel,                []),

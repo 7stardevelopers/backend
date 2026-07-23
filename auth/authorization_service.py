@@ -44,6 +44,7 @@ class AuthorizationService:
         otp_hash = hashlib.sha256(otp.encode()).hexdigest()
         r.setex(f"otp:{phone}", OTP_TTL, otp_hash)
 
+        print(f"[OTP] Generated OTP for {phone}: {otp}")
         self._send_sms(phone, otp)
         return "success", {"message": "OTP sent", "phone": phone}
 
@@ -65,7 +66,10 @@ class AuthorizationService:
         user = self.modal.find_by_phone(connection, phone)
         is_new = user is None
         if is_new:
-            user = self.modal.create(connection, phone)
+            user = self.modal.create(connection, phone, role=data.role)
+        elif data.role == "PROVIDER" and user.get("role") == "CUSTOMER":
+            self.modal.update(connection, user["user_id"], {"role": "PROVIDER"})
+            user = self.modal.find_by_id(connection, user["user_id"])
 
         access_token, refresh_token, jti = self._generate_tokens(user)
         self.modal.store_refresh_token(

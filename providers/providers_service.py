@@ -152,6 +152,14 @@ class ProvidersService:
         self.modal.update(connection, provider_id, {"status": "SUSPENDED", "is_available": False})
         return "success", {"message": "Provider suspended"}
 
+    def get_my_earnings(self, obj, connection):
+        user_id = obj.pop("_user_id")
+        role    = obj.pop("_role", None)
+        if role != "PROVIDER":
+            raise PermissionError("Provider role required")
+        provider = self._get_or_create_provider(connection, user_id)
+        return "success", self.modal.get_earnings(connection, provider["provider_id"])
+
     def admin_list_detailed(self, obj, connection):
         role = obj.pop("_role", None)
         obj.pop("_user_id", None)

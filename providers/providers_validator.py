@@ -17,6 +17,7 @@ class UpdateProviderProfileSchema(BaseModel):
     years_experience: Optional[int] = None
     bank_account_number: Optional[str] = None
     bank_ifsc: Optional[str] = None
+    bank_account_name: Optional[str] = None
 
 
 class UpdateLocationSchema(BaseModel):
