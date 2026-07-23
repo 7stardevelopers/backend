@@ -132,6 +132,15 @@ class AdminMaster:
         """
         return [dict(r) for r in conn.execute(text(sql)).mappings().fetchall()]
 
+    def list_categories(self, conn):
+        sql = """
+            SELECT c.*,
+              (SELECT COUNT(*) FROM services s WHERE s.category_id = c.category_id) AS service_count
+            FROM categories c
+            ORDER BY c.sort_order, c.name
+        """
+        return [dict(r) for r in conn.execute(text(sql)).mappings().fetchall()]
+
     def list_payments(self, conn, status=None, page=1, per_page=20):
         where  = "WHERE pay.status = :status" if status else ""
         params = {"lim": per_page, "off": (page - 1) * per_page}
