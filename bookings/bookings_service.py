@@ -142,7 +142,11 @@ class BookingsService:
             provider = ProvidersMaster().find_by_user_id(connection, user_id)
             if not provider:
                 return "success", []
-            filters["provider_id"] = provider["provider_id"]
+            return "success", self.modal.read_for_provider(
+                connection, provider["provider_id"],
+                status_filter=status,
+                limit=20, offset=(page - 1) * 20,
+            )
         elif role in ("ADMIN", "SUPPORT"):
             pass
         else:
@@ -155,8 +159,15 @@ class BookingsService:
         role = obj.pop("_role", None)
         booking_id = obj.get("id") or obj.get("booking_id")
         booking = self.modal.read_one(connection, booking_id)
-        if role not in ("ADMIN", "SUPPORT") and str(booking.get("customer_id")) != str(user_id) and str(booking.get("provider_id")) != str(user_id):
-            raise PermissionError("Access denied")
+        if role not in ("ADMIN", "SUPPORT"):
+            is_customer = str(booking.get("customer_id")) == str(user_id)
+            is_provider = False
+            if booking.get("provider_id"):
+                prov = ProvidersMaster().find_by_user_id(connection, user_id)
+                if prov and str(prov["provider_id"]) == str(booking["provider_id"]):
+                    is_provider = True
+            if not is_customer and not is_provider:
+                raise PermissionError("Access denied")
         booking["items"] = self.modal.get_items(connection, booking_id)
         if booking.get("provider_id"):
             try:
@@ -247,8 +258,10 @@ class BookingsService:
         new_status = obj.get("status")
         booking = self.modal.read_one(connection, booking_id)
 
-        if role == "PROVIDER" and str(booking.get("provider_id")) != str(user_id):
-            raise PermissionError("You are not assigned to this booking")
+        if role == "PROVIDER":
+            prov = ProvidersMaster().find_by_user_id(connection, user_id)
+            if not prov or str(prov["provider_id"]) != str(booking.get("provider_id")):
+                raise PermissionError("You are not assigned to this booking")
 
         allowed = ALLOWED_TRANSITIONS.get(role, {}).get(booking["status"], [])
         if new_status not in allowed:
@@ -263,7 +276,8 @@ class BookingsService:
         booking_id = obj.get("id") or obj.get("booking_id")
         proof_photos = obj.get("proof_photos", [])
         booking = self.modal.read_one(connection, booking_id)
-        if role != "PROVIDER" or str(booking.get("provider_id")) != str(user_id):
+        prov = ProvidersMaster().find_by_user_id(connection, user_id)
+        if role != "PROVIDER" or not prov or str(prov["provider_id"]) != str(booking.get("provider_id")):
             raise PermissionError("You are not assigned to this booking")
         if booking["status"] != "IN_PROGRESS":
             raise ValueError("Booking must be IN_PROGRESS to complete")

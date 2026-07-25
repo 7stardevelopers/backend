@@ -145,6 +145,24 @@ class BookingsMaster:
                 result.append(b)
         return result[:20]
 
+    def read_for_provider(self, conn, provider_id: str, status_filter=None, limit=20, offset=0) -> list:
+        params = {"pid": provider_id, "limit": limit, "offset": offset}
+        status_clause = ""
+        if status_filter:
+            status_clause = "AND b.status = :status"
+            params["status"] = status_filter
+        sql = text(f"""
+            SELECT b.*, u.name AS customer_name, u.phone AS customer_phone
+            FROM bookings b
+            JOIN users u ON u.user_id = b.customer_id
+            WHERE b.provider_id = :pid
+            {status_clause}
+            ORDER BY b.created_at DESC
+            LIMIT :limit OFFSET :offset
+        """)
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r._mapping) for r in rows]
+
     def claim_booking(self, conn, booking_id: str, provider_id: str) -> bool:
         """Atomically assign provider only if still unassigned. Returns True if claimed."""
         result = conn.execute(

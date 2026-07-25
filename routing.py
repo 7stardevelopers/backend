@@ -1,5 +1,6 @@
 import re
 from auth.authorization_service import AuthorizationService
+from chat.messages_service import MessagesService
 from bookings.bookings_service import BookingsService
 from instant_bookings.instant_bookings_service import InstantBookingsService
 from services_catalog.services_service import ServicesService
@@ -32,6 +33,7 @@ _docs   = DocumentsService()
 _admin  = AdminService()
 _fin    = FinanceService()
 _media  = MediaService()
+_msgs   = MessagesService()
 
 # (METHOD, path_pattern, handler, param_names)
 # param_names: list of path param names extracted via regex group
@@ -69,7 +71,9 @@ ROUTES = [
     ("POST", r"/bookings/(?P<id>[^/]+)/otp-verify", _books.verify_door_otp, ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/tip",   _books.add_tip,           ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/complete", _books.complete,        ["id"]),
-    ("POST", r"/bookings/(?P<id>[^/]+)/rebook", _books.rebook,           ["id"]),
+    ("POST", r"/bookings/(?P<id>[^/]+)/rebook",   _books.rebook,             ["id"]),
+    ("GET",  r"/bookings/(?P<id>[^/]+)/messages", _msgs.list_messages,       ["id"]),
+    ("POST", r"/bookings/(?P<id>[^/]+)/messages", _msgs.send_message,        ["id"]),
 
     # INSTANT BOOKINGS
     ("POST", "/instant-bookings",           _ibooks.create_instant,      []),
