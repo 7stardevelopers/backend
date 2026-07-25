@@ -1,7 +1,19 @@
+import json
+import math
 import random
 import string
+from sqlalchemy import text
 from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
+
+
+def _haversine_km(lat1, lng1, lat2, lng2):
+    R = 6371
+    φ1, φ2 = math.radians(lat1), math.radians(lat2)
+    dφ = math.radians(lat2 - lat1)
+    dλ = math.radians(lng2 - lng1)
+    a = math.sin(dφ / 2) ** 2 + math.cos(φ1) * math.cos(φ2) * math.sin(dλ / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 class BookingsMaster:
@@ -91,3 +103,73 @@ class BookingsMaster:
             .where(self.t.c.booking_id == booking_id)
             .values(proof_photos=photo_urls, updated_at=now_utc())
         )
+
+    def get_available_for_provider(self, conn, provider_id: str, lat=None, lng=None) -> list:
+        # Pull coords from snapshot first, fall back to user_addresses table
+        rows = conn.execute(text("""
+            SELECT b.*,
+                   COALESCE(
+                       JSON_UNQUOTE(JSON_EXTRACT(b.address_snapshot, '$.lat')),
+                       ua.lat
+                   ) AS _lat,
+                   COALESCE(
+                       JSON_UNQUOTE(JSON_EXTRACT(b.address_snapshot, '$.lng')),
+                       ua.lng
+                   ) AS _lng
+            FROM bookings b
+            JOIN provider_services ps ON b.service_id = ps.service_id
+            LEFT JOIN user_addresses ua ON ua.address_id = b.address_id
+            WHERE b.status = 'PENDING'
+              AND b.provider_id IS NULL
+              AND ps.provider_id = :pid
+            ORDER BY b.scheduled_at ASC
+            LIMIT 50
+        """), {"pid": provider_id})
+        bookings = [dict(r._mapping) for r in rows.fetchall()]
+
+        if lat is None or lng is None:
+            # No worker coords — strip internal fields and return all
+            for b in bookings:
+                b.pop("_lat", None)
+                b.pop("_lng", None)
+            return bookings[:20]
+
+        result = []
+        for b in bookings:
+            b_lat = b.pop("_lat", None)
+            b_lng = b.pop("_lng", None)
+            if b_lat is None or b_lng is None:
+                # No location data anywhere — skip, can't verify proximity
+                continue
+            if _haversine_km(lat, lng, float(b_lat), float(b_lng)) <= 20:
+                result.append(b)
+        return result[:20]
+
+    def read_for_provider(self, conn, provider_id: str, status_filter=None, limit=20, offset=0) -> list:
+        params = {"pid": provider_id, "limit": limit, "offset": offset}
+        status_clause = ""
+        if status_filter:
+            status_clause = "AND b.status = :status"
+            params["status"] = status_filter
+        sql = text(f"""
+            SELECT b.*, u.name AS customer_name, u.phone AS customer_phone
+            FROM bookings b
+            JOIN users u ON u.user_id = b.customer_id
+            WHERE b.provider_id = :pid
+            {status_clause}
+            ORDER BY b.created_at DESC
+            LIMIT :limit OFFSET :offset
+        """)
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r._mapping) for r in rows]
+
+    def claim_booking(self, conn, booking_id: str, provider_id: str) -> bool:
+        """Atomically assign provider only if still unassigned. Returns True if claimed."""
+        result = conn.execute(
+            self.t.update()
+            .where(self.t.c.booking_id == booking_id)
+            .where(self.t.c.status == "PENDING")
+            .where(self.t.c.provider_id == None)
+            .values(provider_id=provider_id, status="ACCEPTED", updated_at=now_utc())
+        )
+        return result.rowcount > 0

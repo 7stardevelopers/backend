@@ -7,6 +7,15 @@ from chat.messages_validator import SendMessageSchema
 from bookings.bookings_modal import BookingsMaster
 
 
+def _provider_user_id(connection, booking_provider_id):
+    """Resolve providers.provider_id → users.user_id."""
+    if not booking_provider_id:
+        return None
+    from providers.providers_modal import ProvidersMaster
+    prov = ProvidersMaster().find_by_id(connection, booking_provider_id)
+    return str(prov["user_id"]) if prov else None
+
+
 class MessagesService:
     def __init__(self):
         self.modal = MessagesMaster()
@@ -14,16 +23,21 @@ class MessagesService:
 
     def send_message(self, obj, connection):
         user_id = obj.pop("_user_id")
-        role = obj.pop("_role", None)
-        data = SendMessageSchema(**obj)
+        obj.pop("_role", None)
+        # booking_id can come from path param (id) or body
+        booking_id = obj.get("id") or obj.get("booking_id")
+        obj["booking_id"] = booking_id
+        data = SendMessageSchema(**{k: v for k, v in obj.items() if not k.startswith("_") and k != "id"})
 
         booking = self.booking_modal.read_one(connection, data.booking_id)
-        customer_id = str(booking["customer_id"])
-        provider_id = str(booking.get("provider_id", ""))
+        customer_id      = str(booking["customer_id"])
+        prov_user_id     = _provider_user_id(connection, booking.get("provider_id"))
 
         if str(user_id) == customer_id:
-            to_id = provider_id
-        elif str(user_id) == provider_id:
+            if not prov_user_id:
+                raise ValueError("No provider assigned to this booking yet")
+            to_id = prov_user_id
+        elif prov_user_id and str(user_id) == prov_user_id:
             to_id = customer_id
         else:
             raise PermissionError("You are not a participant of this booking")
@@ -34,12 +48,18 @@ class MessagesService:
 
     def list_messages(self, obj, connection):
         user_id = obj.pop("_user_id")
-        role = obj.pop("_role", None)
-        booking_id = obj.get("booking_id")
+        role    = obj.pop("_role", None)
+        booking_id = obj.get("id") or obj.get("booking_id")
+
         booking = self.booking_modal.read_one(connection, booking_id)
-        if str(booking["customer_id"]) != str(user_id) and str(booking.get("provider_id", "")) != str(user_id):
-            if role not in ("ADMIN", "SUPPORT"):
-                raise PermissionError("Access denied")
+        customer_id  = str(booking["customer_id"])
+        prov_user_id = _provider_user_id(connection, booking.get("provider_id"))
+
+        is_customer = str(user_id) == customer_id
+        is_provider = prov_user_id and str(user_id) == prov_user_id
+        if not is_customer and not is_provider and role not in ("ADMIN", "SUPPORT"):
+            raise PermissionError("Access denied")
+
         self.modal.mark_seen(connection, booking_id, user_id)
         messages = self.modal.list_for_booking(connection, booking_id)
         return "success", messages
@@ -53,8 +73,7 @@ class MessagesService:
         if not endpoint:
             return
         try:
-            sel = ws.select().where(ws.c.user_id == to_user_id)
-            rows = connection.execute(sel).fetchall()
+            rows = connection.execute(ws.select().where(ws.c.user_id == to_user_id)).fetchall()
             client = boto3.client(
                 "apigatewaymanagementapi",
                 endpoint_url=endpoint,

@@ -10,6 +10,7 @@ from coupons.coupons_modal import CouponsMaster
 from notifications.notifications_service import NotificationsService
 from payments.payment_modal import PaymentMaster
 from providers.provider_matching import match_provider
+from providers.providers_modal import ProvidersMaster
 from subscriptions.subscriptions_modal import SubscriptionsMaster
 from utilities.common_table_elements import new_uuid, now_utc
 from utilities.db_connection import get_table
@@ -91,21 +92,32 @@ class BookingsService:
         if validated.items:
             self.modal.create_items(connection, booking["booking_id"], validated.items)
 
+        # Notify nearby available providers — booking stays PENDING, first to accept gets it
         try:
-            provider = match_provider(connection, booking)
-            if provider:
-                self.modal.assign_provider(connection, booking["booking_id"], provider["provider_id"])
-                booking["provider_id"] = provider["provider_id"]
-                booking["status"] = "ACCEPTED"
+            from providers.provider_matching import haversine
+            addr = booking.get("address_snapshot") or {}
+            b_lat = addr.get("lat")
+            b_lng = addr.get("lng")
+            candidates = ProvidersMaster().get_available_for_service(connection, booking["service_id"])
+            nearby_user_ids = []
+            for p in candidates:
+                p_lat = p.get("last_lat")
+                p_lng = p.get("last_lng")
+                if p_lat and p_lng and b_lat and b_lng:
+                    if haversine(float(b_lat), float(b_lng), float(p_lat), float(p_lng)) <= 20:
+                        nearby_user_ids.append(p["user_id"])
+                else:
+                    nearby_user_ids.append(p["user_id"])
+            if nearby_user_ids:
                 self.notif.send_push(
                     connection=connection,
-                    user_ids=[provider["user_id"]],
-                    title="New job request",
-                    body=f"New booking assigned to you",
-                    data={"type": "job_request", "booking_id": booking["booking_id"]},
+                    user_ids=nearby_user_ids,
+                    title="New Job Near You",
+                    body="A new job is available in your area. Tap to view.",
+                    data={"type": "job_available", "booking_id": booking["booking_id"]},
                 )
         except Exception as e:
-            print(f"[Matching] non-fatal: {e}")
+            print(f"[Notify] nearby push failed (non-fatal): {e}")
 
         self.notif.send_push(
             connection=connection,
@@ -127,7 +139,14 @@ class BookingsService:
         if role == "CUSTOMER":
             filters["customer_id"] = user_id
         elif role == "PROVIDER":
-            filters["provider_id"] = user_id
+            provider = ProvidersMaster().find_by_user_id(connection, user_id)
+            if not provider:
+                return "success", []
+            return "success", self.modal.read_for_provider(
+                connection, provider["provider_id"],
+                status_filter=status,
+                limit=20, offset=(page - 1) * 20,
+            )
         elif role in ("ADMIN", "SUPPORT"):
             pass
         else:
@@ -140,9 +159,96 @@ class BookingsService:
         role = obj.pop("_role", None)
         booking_id = obj.get("id") or obj.get("booking_id")
         booking = self.modal.read_one(connection, booking_id)
-        if role not in ("ADMIN", "SUPPORT") and str(booking.get("customer_id")) != str(user_id) and str(booking.get("provider_id")) != str(user_id):
-            raise PermissionError("Access denied")
+        if role not in ("ADMIN", "SUPPORT"):
+            is_customer = str(booking.get("customer_id")) == str(user_id)
+            is_provider = False
+            if booking.get("provider_id"):
+                prov = ProvidersMaster().find_by_user_id(connection, user_id)
+                if prov and str(prov["provider_id"]) == str(booking["provider_id"]):
+                    is_provider = True
+            if not is_customer and not is_provider:
+                raise PermissionError("Access denied")
         booking["items"] = self.modal.get_items(connection, booking_id)
+        if booking.get("provider_id"):
+            try:
+                from sqlalchemy import text as _text
+                row = connection.execute(_text("""
+                    SELECT u.name, u.phone, p.avg_rating, p.total_reviews
+                    FROM providers p
+                    JOIN users u ON u.user_id = p.user_id
+                    WHERE p.provider_id = :pid
+                """), {"pid": booking["provider_id"]}).fetchone()
+                if row:
+                    booking["provider_name"]  = row["name"]
+                    booking["provider_phone"] = row["phone"]
+                    booking["provider_rating"] = float(row["avg_rating"] or 0)
+                loc = ProvidersMaster().get_location(connection, booking["provider_id"])
+                if loc:
+                    booking["provider_lat"] = float(loc["lat"]) if loc.get("lat") else None
+                    booking["provider_lng"] = float(loc["lng"]) if loc.get("lng") else None
+            except Exception:
+                pass
+        if booking.get("customer_id"):
+            try:
+                from sqlalchemy import text as _text
+                row = connection.execute(_text(
+                    "SELECT name, phone FROM users WHERE user_id = :uid"
+                ), {"uid": booking["customer_id"]}).fetchone()
+                if row:
+                    booking["customer_name"]  = row["name"]
+                    booking["customer_phone"] = row["phone"]
+            except Exception:
+                pass
+        return "success", booking
+
+    def list_available_for_provider(self, obj, connection):
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        if role != "PROVIDER":
+            raise PermissionError("Provider role required")
+        prov_master = ProvidersMaster()
+        provider = prov_master.find_by_user_id(connection, user_id)
+        if not provider:
+            return "success", []
+
+        lat = obj.get("lat")
+        lng = obj.get("lng")
+        if lat is not None and lng is not None:
+            try:
+                lat, lng = float(lat), float(lng)
+                prov_master.upsert_location(connection, provider["provider_id"], lat, lng)
+            except (TypeError, ValueError):
+                lat = lng = None
+
+        if lat is None:
+            loc = prov_master.get_location(connection, provider["provider_id"])
+            if loc and loc.get("lat"):
+                lat = float(loc["lat"])
+                lng = float(loc["lng"])
+
+        bookings = self.modal.get_available_for_provider(connection, provider["provider_id"], lat, lng)
+        return "success", bookings
+
+    def accept_booking(self, obj, connection):
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        if role != "PROVIDER":
+            raise PermissionError("Provider role required")
+        booking_id = obj.get("id")
+        provider = ProvidersMaster().find_by_user_id(connection, user_id)
+        if not provider:
+            raise ValueError("Provider profile not found")
+        claimed = self.modal.claim_booking(connection, booking_id, provider["provider_id"])
+        if not claimed:
+            raise ValueError("Booking is no longer available — another provider may have accepted it")
+        booking = self.modal.read_one(connection, booking_id)
+        self.notif.send_push(
+            connection=connection,
+            user_ids=[booking["customer_id"]],
+            title="Expert on the way!",
+            body="Your booking has been accepted. The expert is on the way.",
+            data={"type": "booking_accepted", "booking_id": booking_id},
+        )
         return "success", booking
 
     def update_status(self, obj, connection):
@@ -152,8 +258,10 @@ class BookingsService:
         new_status = obj.get("status")
         booking = self.modal.read_one(connection, booking_id)
 
-        if role == "PROVIDER" and str(booking.get("provider_id")) != str(user_id):
-            raise PermissionError("You are not assigned to this booking")
+        if role == "PROVIDER":
+            prov = ProvidersMaster().find_by_user_id(connection, user_id)
+            if not prov or str(prov["provider_id"]) != str(booking.get("provider_id")):
+                raise PermissionError("You are not assigned to this booking")
 
         allowed = ALLOWED_TRANSITIONS.get(role, {}).get(booking["status"], [])
         if new_status not in allowed:
@@ -168,7 +276,8 @@ class BookingsService:
         booking_id = obj.get("id") or obj.get("booking_id")
         proof_photos = obj.get("proof_photos", [])
         booking = self.modal.read_one(connection, booking_id)
-        if role != "PROVIDER" or str(booking.get("provider_id")) != str(user_id):
+        prov = ProvidersMaster().find_by_user_id(connection, user_id)
+        if role != "PROVIDER" or not prov or str(prov["provider_id"]) != str(booking.get("provider_id")):
             raise PermissionError("You are not assigned to this booking")
         if booking["status"] != "IN_PROGRESS":
             raise ValueError("Booking must be IN_PROGRESS to complete")
