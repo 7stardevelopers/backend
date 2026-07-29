@@ -302,6 +302,23 @@ CREATE TABLE IF NOT EXISTS reviews (
     FOREIGN KEY (provider_id) REFERENCES providers(provider_id)
 );
 
+-- PROVIDER REVIEWS (worker reviews customer)
+CREATE TABLE IF NOT EXISTS provider_reviews (
+    review_id    CHAR(36)   NOT NULL DEFAULT (UUID()),
+    booking_id   CHAR(36)   NOT NULL,
+    provider_id  CHAR(36)   NOT NULL,
+    customer_id  CHAR(36)   NOT NULL,
+    rating       SMALLINT   NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment      TEXT,
+    is_deleted   BOOLEAN    DEFAULT FALSE,
+    created_at   TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (review_id),
+    UNIQUE KEY uq_provider_reviews_booking (booking_id),
+    FOREIGN KEY (booking_id)  REFERENCES bookings(booking_id),
+    FOREIGN KEY (provider_id) REFERENCES providers(provider_id),
+    FOREIGN KEY (customer_id) REFERENCES users(user_id)
+);
+
 -- COUPON USES
 CREATE TABLE IF NOT EXISTS coupon_uses (
     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
