@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS user_addresses (
     pincode       VARCHAR(10),
     city          VARCHAR(100),
     is_default    BOOLEAN DEFAULT FALSE,
+    is_deleted    BOOLEAN NOT NULL DEFAULT FALSE,
     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (address_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
@@ -499,6 +500,10 @@ CREATE TABLE IF NOT EXISTS provider_locations (
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (provider_id) REFERENCES providers(provider_id)
 );
+
+-- MIGRATION (2026-08-08): soft-delete support for user_addresses.
+-- Needed for CREATE TABLE IF NOT EXISTS above to be a no-op on existing DBs.
+ALTER TABLE user_addresses ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- INDEXES
 -- MySQL has no CREATE INDEX IF NOT EXISTS.

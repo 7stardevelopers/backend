@@ -48,7 +48,9 @@ class UsersMaster:
     # ── addresses ─────────────────────────────────────────────────────
 
     def get_addresses(self, conn, user_id: str):
-        sel = self.addr.select().where(self.addr.c.user_id == user_id)
+        sel = self.addr.select().where(self.addr.c.user_id == user_id).where(
+            self.addr.c.is_deleted == False
+        )
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
@@ -81,9 +83,10 @@ class UsersMaster:
 
     def delete_address(self, conn, user_id: str, address_id: str):
         conn.execute(
-            self.addr.delete()
+            self.addr.update()
             .where(self.addr.c.address_id == address_id)
             .where(self.addr.c.user_id == user_id)
+            .values(is_deleted=True)
         )
 
     # ── refresh tokens ────────────────────────────────────────────────
