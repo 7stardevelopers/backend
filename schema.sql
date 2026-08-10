@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS user_addresses (
     pincode       VARCHAR(10),
     city          VARCHAR(100),
     is_default    BOOLEAN DEFAULT FALSE,
+    is_deleted    BOOLEAN NOT NULL DEFAULT FALSE,
     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (address_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
@@ -302,6 +303,23 @@ CREATE TABLE IF NOT EXISTS reviews (
     FOREIGN KEY (provider_id) REFERENCES providers(provider_id)
 );
 
+-- PROVIDER REVIEWS (worker reviews customer)
+CREATE TABLE IF NOT EXISTS provider_reviews (
+    review_id    CHAR(36)   NOT NULL DEFAULT (UUID()),
+    booking_id   CHAR(36)   NOT NULL,
+    provider_id  CHAR(36)   NOT NULL,
+    customer_id  CHAR(36)   NOT NULL,
+    rating       SMALLINT   NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment      TEXT,
+    is_deleted   BOOLEAN    DEFAULT FALSE,
+    created_at   TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (review_id),
+    UNIQUE KEY uq_provider_reviews_booking (booking_id),
+    FOREIGN KEY (booking_id)  REFERENCES bookings(booking_id),
+    FOREIGN KEY (provider_id) REFERENCES providers(provider_id),
+    FOREIGN KEY (customer_id) REFERENCES users(user_id)
+);
+
 -- COUPON USES
 CREATE TABLE IF NOT EXISTS coupon_uses (
     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -483,6 +501,10 @@ CREATE TABLE IF NOT EXISTS provider_locations (
     FOREIGN KEY (provider_id) REFERENCES providers(provider_id)
 );
 
+-- MIGRATION (2026-08-08): soft-delete support for user_addresses.
+-- Needed for CREATE TABLE IF NOT EXISTS above to be a no-op on existing DBs.
+ALTER TABLE user_addresses ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- INDEXES
 -- MySQL has no CREATE INDEX IF NOT EXISTS.
 -- This guard procedure skips any index that already exists, so the block is safe to re-run.
@@ -530,18 +552,31 @@ INSERT IGNORE INTO categories (category_id, name, icon, color, sort_order) VALUE
 
 -- SEED DATA: Services
 INSERT IGNORE INTO services (service_id, category_id, name, description, base_price, instant_available, sort_order) VALUES
-  ('s1', 'c1', 'Deep Home Cleaning', 'Complete deep cleaning of your entire home', 199900, FALSE, 1),
-  ('s2', 'c1', 'Bathroom Cleaning', 'Professional bathroom scrub and sanitization', 99900, FALSE, 2),
-  ('s3', 'c5', 'Plumbing', 'Leak fix, pipe repair, tap installation', 49900, TRUE, 1),
-  ('s4', 'c4', 'Electrical', 'Switch, socket, fan, light installation & repair', 49900, TRUE, 1),
-  ('s5', 'c9', 'AC Service & Repair', 'AC gas refill, cleaning, installation', 149900, FALSE, 1),
-  ('s6', 'c3', 'Appliance Repair', 'Washing machine, refrigerator, microwave repair', 79900, FALSE, 1),
-  ('s7', 'c7', 'Carpentry', 'Furniture assembly, door fix, custom woodwork', 59900, TRUE, 1),
-  ('s8', 'c6', 'Home Painting', 'Interior and exterior painting', 299900, FALSE, 1),
-  ('s9', 'c8', 'Pest Control', 'Cockroach, ant, termite, bed bug treatment', 129900, FALSE, 1);
+  ('s1', 'c1', 'Deep Home Cleaning', 'Complete deep cleaning of your entire home', 49900, FALSE, 1),
+  ('s2', 'c1', 'Bathroom Cleaning', 'Professional bathroom scrub and sanitization', 29900, FALSE, 2),
+  ('s3', 'c5', 'Plumbing', 'Leak fix, pipe repair, tap installation', 19900, TRUE, 1),
+  ('s4', 'c4', 'Electrical', 'Switch, socket, fan, light installation & repair', 19900, TRUE, 1),
+  ('s5', 'c9', 'AC Service & Repair', 'AC gas refill, cleaning, installation', 39900, FALSE, 1),
+  ('s6', 'c3', 'Appliance Repair', 'Washing machine, refrigerator, microwave repair', 24900, FALSE, 1),
+  ('s7', 'c7', 'Carpentry', 'Furniture assembly, door fix, custom woodwork', 19900, TRUE, 1),
+  ('s8', 'c6', 'Home Painting', 'Interior and exterior painting', 79900, FALSE, 1),
+  ('s9', 'c8', 'Pest Control', 'Cockroach, ant, termite, bed bug treatment', 39900, FALSE, 1);
 
 -- SEED DATA: Subscription Plans
 INSERT IGNORE INTO subscription_plans (name, price, bookings_included, discount_pct, sort_order, features) VALUES
   ('Basic Pass', 29900, 3, 10, 1, '{"highlights": ["3 bookings/month", "10% off each booking", "Priority support"]}'),
   ('Star Pass', 59900, 8, 20, 2, '{"highlights": ["8 bookings/month", "20% off each booking", "Free re-service if not satisfied"]}'),
   ('Pro Pass', 99900, NULL, 30, 3, '{"highlights": ["Unlimited bookings", "30% off each booking", "Priority matching", "Dedicated account manager"]}');
+
+-- PRICE UPDATE (2026-08-08): lower service base_price for existing DBs.
+-- INSERT IGNORE above only seeds fresh databases; run this block against an
+-- already-populated DB (e.g. staging) to bring existing rows down to the new prices.
+UPDATE services SET base_price = 49900 WHERE service_id = 's1';
+UPDATE services SET base_price = 29900 WHERE service_id = 's2';
+UPDATE services SET base_price = 19900 WHERE service_id = 's3';
+UPDATE services SET base_price = 19900 WHERE service_id = 's4';
+UPDATE services SET base_price = 39900 WHERE service_id = 's5';
+UPDATE services SET base_price = 24900 WHERE service_id = 's6';
+UPDATE services SET base_price = 19900 WHERE service_id = 's7';
+UPDATE services SET base_price = 79900 WHERE service_id = 's8';
+UPDATE services SET base_price = 39900 WHERE service_id = 's9';

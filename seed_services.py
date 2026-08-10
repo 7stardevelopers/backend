@@ -20,7 +20,10 @@ import urllib.error
 BASE_URL = "https://1ipuylc4mh.execute-api.ap-south-1.amazonaws.com/Prod"
 
 # ─── Seed data from CSVs ─────────────────────────────────────────────────────
-# Prices are in INR (rupees). Durations in minutes.
+# Prices below are written in INR rupees for readability; seed() converts them
+# to paise (rupees * 100) before sending, matching the DB/API convention used
+# everywhere else (services.base_price, bookings.total_amount, Razorpay amount).
+# Durations in minutes.
 
 ELECTRICAL = {
     "service_id": "s4",
@@ -174,7 +177,10 @@ def seed(token):
             payload = {
                 "name":       sc["name"],
                 "sort_order": sc["sort_order"],
-                "items":      sc["items"],
+                "items":      [
+                    {**item, "price": item["price"] * 100}
+                    for item in sc["items"]
+                ],
             }
             result = api_post(f"/admin/services/{sid}/sub-categories", payload, token)
             if result and result.get("status") in ("created", "success"):

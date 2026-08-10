@@ -76,10 +76,21 @@ class BookingsMaster:
         return True
 
     def create_items(self, conn, booking_id: str, items: list):
+        sub_svcs_t = get_table("sub_services")
         for item in items:
+            ss_id = item.get("sub_service_id")
+            if not ss_id:
+                continue
+            row = conn.execute(
+                sub_svcs_t.select().where(sub_svcs_t.c.sub_service_id == ss_id)
+            ).fetchone()
+            if not row:
+                # Client sent a service_id or stale/invalid UUID — skip gracefully
+                print(f"[BookingItems] Skipping unknown sub_service_id '{ss_id}' for booking {booking_id}")
+                continue
             conn.execute(self.items.insert().values(
                 booking_id=booking_id,
-                sub_service_id=item["sub_service_id"],
+                sub_service_id=ss_id,
                 name_snapshot=item.get("name"),
                 price_snapshot=item.get("price"),
                 quantity=item.get("quantity", 1),

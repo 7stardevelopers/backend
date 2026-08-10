@@ -40,6 +40,33 @@ class ReviewsService:
 
         return "created", review
 
+    def create_provider_review(self, obj, connection):
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        if role != "PROVIDER":
+            raise PermissionError("Only providers can submit provider reviews")
+
+        data = CreateReviewSchema(**obj)
+        booking = self.booking_modal.read_one(connection, data.booking_id)
+        if booking["status"] != "COMPLETED":
+            raise ValueError("Can only review completed bookings")
+
+        provider = self.provider_modal.find_by_user_id(connection, user_id)
+        if not provider or str(provider["provider_id"]) != str(booking["provider_id"]):
+            raise PermissionError("Access denied")
+        if self.modal.find_provider_review_by_booking(connection, data.booking_id):
+            raise ValueError("Review already submitted for this booking")
+
+        review_data = {
+            "booking_id": data.booking_id,
+            "provider_id": provider["provider_id"],
+            "customer_id": booking["customer_id"],
+            "rating": data.rating,
+            "comment": data.comment,
+        }
+        review = self.modal.create_provider_review(connection, review_data)
+        return "created", review
+
     def list_for_service(self, obj, connection):
         obj.pop("_user_id", None)
         obj.pop("_role", None)

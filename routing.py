@@ -94,6 +94,7 @@ ROUTES = [
 
     # REVIEWS
     ("POST", "/reviews",                    _rev.create,                 []),
+    ("POST", "/provider/reviews",           _rev.create_provider_review, []),
     ("GET",  r"/reviews/service/(?P<id>[^/]+)", _rev.list_for_service,   ["id"]),
     ("GET",  r"/reviews/provider/(?P<id>[^/]+)", _rev.list_for_provider, ["id"]),
     ("GET",  "/reviews",                    _rev.list_all,               []),

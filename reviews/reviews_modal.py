@@ -45,6 +45,22 @@ class ReviewsMaster:
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
+    # ── Provider → Customer reviews ──────────────────────────────────────────
+    @property
+    def pr(self):
+        return get_table("provider_reviews")
+
+    def create_provider_review(self, conn, data: dict) -> dict:
+        data["review_id"] = new_uuid()
+        data["is_deleted"] = False
+        data["created_at"] = now_utc()
+        conn.execute(self.pr.insert().values(**data))
+        return data
+
+    def find_provider_review_by_booking(self, conn, booking_id: str):
+        row = conn.execute(self.pr.select().where(self.pr.c.booking_id == booking_id)).fetchone()
+        return dict(row._mapping) if row else None
+
     def soft_delete(self, conn, review_id: str):
         conn.execute(self.r.update().where(self.r.c.review_id == review_id).values(is_deleted=True))
 

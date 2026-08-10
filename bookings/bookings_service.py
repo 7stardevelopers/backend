@@ -199,6 +199,16 @@ class BookingsService:
                     booking["customer_phone"] = row["phone"]
             except Exception:
                 pass
+        try:
+            from reviews.reviews_modal import ReviewsMaster
+            rm = ReviewsMaster()
+            review_row = rm.find_by_booking(connection, booking_id)
+            booking["review"] = dict(review_row._mapping) if review_row else None
+            pr_row = rm.find_provider_review_by_booking(connection, booking_id)
+            booking["provider_review"] = dict(pr_row._mapping) if pr_row else None
+        except Exception:
+            booking["review"] = None
+            booking["provider_review"] = None
         return "success", booking
 
     def list_available_for_provider(self, obj, connection):
