@@ -45,3 +45,13 @@ class AddAddressSchema(BaseModel):
     pincode: Optional[str] = Field(None, max_length=10)
     city: Optional[str] = Field(None, max_length=100)
     is_default: bool = False
+
+
+class UpdateAddressSchema(BaseModel):
+    label: Optional[str] = Field(None, max_length=50)
+    full_address: Optional[str] = Field(None, min_length=5)
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    pincode: Optional[str] = Field(None, max_length=10)
+    city: Optional[str] = Field(None, max_length=100)
+    is_default: Optional[bool] = None

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from auth.authorization_modal import UsersMaster
 from auth.authorization_validator import (
     SendOTPSchema, VerifyOTPSchema, RefreshTokenSchema,
-    UpdateProfileSchema, AddAddressSchema,
+    UpdateProfileSchema, AddAddressSchema, UpdateAddressSchema,
 )
 from utilities.redis_connection import get_redis
 
@@ -154,10 +154,13 @@ class AuthorizationService:
             raise PermissionError("Authentication required")
         if not address_id:
             raise ValueError("address_id required")
-        allowed = {"label", "full_address", "lat", "lng", "pincode", "city", "is_default"}
-        fields = {k: v for k, v in obj.items() if k in allowed and v is not None}
-        if fields:
-            self.modal.update_address(connection, user_id, address_id, fields)
+        data = UpdateAddressSchema(**{k: v for k, v in obj.items() if not k.startswith("_")})
+        fields = data.model_dump(exclude_none=True)
+        if not fields:
+            return "success", {"message": "Address updated"}
+        updated = self.modal.update_address(connection, user_id, address_id, fields)
+        if not updated:
+            raise ValueError("Address not found")
         return "success", {"message": "Address updated"}
 
     def delete_address(self, obj, connection):

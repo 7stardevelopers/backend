@@ -74,12 +74,13 @@ class UsersMaster:
                 .where(self.addr.c.user_id == user_id)
                 .values(is_default=False)
             )
-        conn.execute(
+        result = conn.execute(
             self.addr.update()
             .where(self.addr.c.address_id == address_id)
             .where(self.addr.c.user_id == user_id)
             .values(**fields)
         )
+        return result.rowcount > 0
 
     def delete_address(self, conn, user_id: str, address_id: str):
         conn.execute(
