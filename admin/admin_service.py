@@ -52,13 +52,6 @@ class AdminService:
         logs = self.modal.list_logs(connection, page=page)
         return "success", logs
 
-    def list_announcements(self, obj, connection):
-        self._require_admin(obj.pop("_role", None))
-        obj.pop("_user_id", None)
-        page = int(obj.get("page", 1))
-        announcements = self.modal.list_announcements(connection, page=page)
-        return "success", announcements
-
     def list_services(self, obj, connection):
         self._require_admin(obj.pop("_role", None))
         obj.pop("_user_id", None)
@@ -245,6 +238,12 @@ class AdminService:
         obj.pop("_user_id", None)
         limit = int(obj.get("limit", 50))
         return "success", self.modal.list_announcements(connection, limit)
+
+    def list_my_announcements(self, obj, connection):
+        obj.pop("_user_id", None)
+        role = obj.pop("_role", None) or "CUSTOMER"
+        limit = int(obj.get("limit", 10))
+        return "success", self.modal.list_announcements_for_role(connection, role, limit)
 
     def list_logs(self, obj, connection):
         self._require_admin(obj.pop("_role", None))

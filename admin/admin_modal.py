@@ -267,6 +267,16 @@ class AdminMaster:
         conn.execute(t.insert().values(**row))
         return row
 
+    def list_announcements_for_role(self, conn, role: str, limit: int = 10):
+        sql = """
+            SELECT announcement_id, title, body, target_role, sent_at
+            FROM announcements
+            WHERE target_role = 'ALL' OR target_role = :role
+            ORDER BY sent_at DESC
+            LIMIT :lim
+        """
+        return [dict(r) for r in conn.execute(text(sql), {"role": role, "lim": limit}).mappings().fetchall()]
+
     def list_announcements(self, conn, limit=50):
         sql = "SELECT * FROM announcements ORDER BY sent_at DESC LIMIT :lim"
         return [dict(r) for r in conn.execute(text(sql), {"lim": limit}).mappings().fetchall()]
