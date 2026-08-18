@@ -20,7 +20,8 @@ OTP_TTL = 600          # 10 minutes
 OTP_RATE_LIMIT = 5     # per phone per hour
 ACCESS_TTL_MIN = 15
 REFRESH_TTL_DAYS = 30
-MASTER_OTP = "998877"  # dev bypass — remove once MSG91 is live
+MASTER_OTP = "998877"  # dev bypass — only active when OTP_BYPASS_ENABLED=true
+OTP_BYPASS_ENABLED = os.environ.get("OTP_BYPASS_ENABLED", "false").lower() == "true"
 
 
 class AuthorizationService:
@@ -53,7 +54,9 @@ class AuthorizationService:
         data = VerifyOTPSchema(**{k: v for k, v in obj.items() if not k.startswith("_")})
         phone, otp = data.phone, data.otp
 
-        if otp != MASTER_OTP:
+        if OTP_BYPASS_ENABLED and otp == MASTER_OTP:
+            pass
+        else:
             r = get_redis()
             stored_hash = r.get(f"otp:{phone}")
             if not stored_hash:

@@ -74,6 +74,10 @@ class PaymentService:
         payment = self.modal.find_payment(connection, razorpay_order_id=data.razorpay_order_id)
         if not payment:
             raise ValueError("Payment record not found")
+        if str(payment["customer_id"]) != str(user_id):
+            raise PermissionError("Access denied")
+        if str(payment["booking_id"]) != str(data.booking_id):
+            raise ValueError("Booking does not match this payment order")
 
         self.modal.update_payment(connection, payment["payment_id"], {
             "razorpay_payment_id": data.razorpay_payment_id,

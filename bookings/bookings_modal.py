@@ -2,7 +2,7 @@ import json
 import math
 import random
 import string
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
 from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
@@ -28,6 +28,7 @@ class BookingsMaster:
     def create(self, conn, obj: dict) -> dict:
         obj["booking_id"] = new_uuid()
         obj["door_otp"] = "".join(random.choices(string.digits, k=4))
+        obj["door_otp_generated_at"] = now_utc()
         obj["created_at"] = now_utc()
         obj["updated_at"] = now_utc()
         conn.execute(self.t.insert().values(**obj))
@@ -74,6 +75,32 @@ class BookingsMaster:
             .values(door_otp_verified=True, updated_at=now_utc())
         )
         return True
+
+    def record_failed_otp_attempt(self, conn, booking_id: str) -> int:
+        conn.execute(
+            self.t.update()
+            .where(self.t.c.booking_id == booking_id)
+            .values(otp_attempt_count=self.t.c.otp_attempt_count + 1, updated_at=now_utc())
+        )
+        row = conn.execute(
+            self.t.select().where(self.t.c.booking_id == booking_id)
+        ).fetchone()
+        return row._mapping["otp_attempt_count"] if row else 0
+
+    def regenerate_door_otp(self, conn, booking_id: str) -> str:
+        new_otp = "".join(random.choices(string.digits, k=4))
+        conn.execute(
+            self.t.update()
+            .where(self.t.c.booking_id == booking_id)
+            .values(
+                door_otp=new_otp,
+                door_otp_verified=False,
+                otp_attempt_count=0,
+                door_otp_generated_at=now_utc(),
+                updated_at=now_utc(),
+            )
+        )
+        return new_otp
 
     def create_items(self, conn, booking_id: str, items: list):
         sub_svcs_t = get_table("sub_services")
@@ -163,7 +190,7 @@ class BookingsMaster:
             status_clause = "AND b.status = :status"
             params["status"] = status_filter
         sql = text(f"""
-            SELECT b.*, u.name AS customer_name, u.phone AS customer_phone
+            SELECT b.*, u.name AS customer_name, u.photo_url AS customer_photo
             FROM bookings b
             JOIN users u ON u.user_id = b.customer_id
             WHERE b.provider_id = :pid
@@ -173,6 +200,31 @@ class BookingsMaster:
         """)
         rows = conn.execute(sql, params).fetchall()
         return [dict(r._mapping) for r in rows]
+
+    def list_past_providers(self, conn, customer_id: str, service_id: str, limit: int = 5) -> list:
+        sql = text("""
+            SELECT b.provider_id, MAX(b.created_at) AS last_booked
+            FROM bookings b
+            WHERE b.customer_id = :cid AND b.service_id = :sid AND b.status = 'COMPLETED'
+              AND b.provider_id IS NOT NULL
+            GROUP BY b.provider_id
+            ORDER BY last_booked DESC
+            LIMIT :lim
+        """)
+        provider_ids = [r["provider_id"] for r in conn.execute(
+            sql, {"cid": customer_id, "sid": service_id, "lim": limit}
+        ).mappings().fetchall()]
+        if not provider_ids:
+            return []
+        detail_sql = text("""
+            SELECT p.provider_id, u.name, u.photo_url, p.avg_rating, p.is_available
+            FROM providers p JOIN users u ON u.user_id = p.user_id
+            WHERE p.provider_id IN :ids
+        """).bindparams(bindparam("ids", expanding=True))
+        rows = conn.execute(detail_sql, {"ids": provider_ids}).mappings().fetchall()
+        by_id = {r["provider_id"]: dict(r) for r in rows}
+        # preserve the most-recently-booked-first order from the first query
+        return [by_id[pid] for pid in provider_ids if pid in by_id]
 
     def claim_booking(self, conn, booking_id: str, provider_id: str) -> bool:
         """Atomically assign provider only if still unassigned. Returns True if claimed."""

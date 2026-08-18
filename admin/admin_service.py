@@ -279,6 +279,17 @@ class AdminService:
             pass
         return result
 
+    def update_provider_bio_logged(self, obj, connection):
+        user_id     = obj.get("_user_id")
+        provider_id = obj.get("id")
+        from providers.providers_service import ProvidersService
+        result = ProvidersService().admin_update_bio(obj, connection)
+        try:
+            self.modal.write_log(connection, user_id, "UPDATE_PROVIDER_BIO", "provider", provider_id)
+        except Exception:
+            pass
+        return result
+
     def delete_review_logged(self, obj, connection):
         user_id   = obj.get("_user_id")
         review_id = obj.get("id")
