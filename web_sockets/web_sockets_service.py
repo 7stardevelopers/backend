@@ -17,25 +17,12 @@ class WebSocketsService:
         user_id, role = _extract_user_from_token(token)
         if not user_id:
             return "error", "Unauthorized"
-        # Clean up any stale prior connections for this user first — if a
-        # previous session's $disconnect never fired (app killed, network
-        # drop), its row would otherwise sit forever and receive broadcasts
-        # for a connection that no longer exists.
-        self.modal.delete_connections_for_user(conn, user_id)
         self.modal.connect(conn, connection_id, user_id, booking_id, role)
         return "success", "Connected"
 
     def on_disconnect(self, connection_id: str, event: dict, conn):
         self.modal.disconnect(conn, connection_id)
         return "success", "Disconnected"
-
-    def on_join_booking(self, connection_id: str, event: dict, conn):
-        body = _parse_body(event)
-        booking_id = body.get("booking_id")
-        if not booking_id:
-            return "error", "booking_id required"
-        self.modal.update_booking_id(conn, connection_id, booking_id)
-        return "success", "Joined"
 
     def on_message(self, connection_id: str, event: dict, conn):
         body = _parse_body(event)
@@ -121,15 +108,7 @@ def _broadcast_location_to_customer(conn, booking_id: str, lat, lng):
         if not booking:
             return
         customer_id = booking["customer_id"]
-        # Prefer rows explicitly joined to this booking; fall back to a
-        # user-id-only match for any connection that hasn't sent joinBooking
-        # yet, so this doesn't regress mid-rollout or for very old clients.
-        ws_rows = conn.execute(
-            ws_t.select().where(
-                (ws_t.c.user_id == customer_id)
-                & ((ws_t.c.booking_id == booking_id) | (ws_t.c.booking_id.is_(None)))
-            )
-        ).fetchall()
+        ws_rows = conn.execute(ws_t.select().where(ws_t.c.user_id == customer_id)).fetchall()
         client = boto3.client(
             "apigatewaymanagementapi",
             endpoint_url=endpoint,

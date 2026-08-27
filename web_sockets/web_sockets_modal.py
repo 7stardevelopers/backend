@@ -29,11 +29,3 @@ class WebSocketsMaster:
         sel = self.ws.select().where(self.ws.c.connection_id == connection_id)
         row = conn.execute(sel).fetchone()
         return dict(row._mapping) if row else None
-
-    def delete_connections_for_user(self, conn, user_id: str):
-        conn.execute(self.ws.delete().where(self.ws.c.user_id == user_id))
-
-    def update_booking_id(self, conn, connection_id: str, booking_id: str):
-        conn.execute(
-            self.ws.update().where(self.ws.c.connection_id == connection_id).values(booking_id=booking_id)
-        )

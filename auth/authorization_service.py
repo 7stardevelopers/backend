@@ -47,8 +47,14 @@ class AuthorizationService:
         r.setex(f"otp:{phone}", OTP_TTL, otp_hash)
 
         print(f"[OTP] Generated OTP for {phone}: {otp}")
-        self._send_sms(phone, otp)
-        return "success", {"message": "OTP sent", "phone": phone}
+        status, detail = self._send_sms(phone, otp)
+        if status != "ok":
+            print(f"[OTP] SMS not dispatched for {phone}: {detail}")
+        return "success", {
+            "message": "OTP sent",
+            "phone": phone,
+            "sms_dispatched": status == "ok",
+        }
 
     def verify_otp(self, obj, connection):
         data = VerifyOTPSchema(**{k: v for k, v in obj.items() if not k.startswith("_")})
@@ -212,32 +218,44 @@ class AuthorizationService:
         return access_token, refresh_token, jti
 
     def _send_sms(self, phone: str, otp: str):
+        """Send the OTP over SMS via MSG91 v5. Never raises — returns
+        ("ok", None) on success or ("error", <detail>) so the caller can tell
+        the client that delivery failed without exposing the OTP."""
         auth_key = os.environ.get("MSG91_AUTH_KEY", "")
-        sender_id = os.environ.get("MSG91_SENDER_ID", "7STARX")
         template_id = os.environ.get("MSG91_TEMPLATE_ID", "")
 
-        if not auth_key:
-            print(f"[OTP] SMS not configured. OTP for {phone}: {otp}")
-            return
+        if not auth_key or not template_id:
+            missing = ", ".join(
+                name for name, val in (
+                    ("MSG91_AUTH_KEY", auth_key),
+                    ("MSG91_TEMPLATE_ID", template_id),
+                ) if not val
+            )
+            detail = f"MSG91 not fully configured (missing: {missing})"
+            print(f"[OTP] {detail}. OTP for {phone}: {otp}")
+            return "error", detail
 
         try:
             resp = requests.post(
-                "https://api.msg91.com/api/v5/otp",
+                "https://control.msg91.com/api/v5/otp",
+                headers={"authkey": auth_key, "Content-Type": "application/json"},
                 params={
-                    "authkey": auth_key,
+                    "template_id": template_id,
                     "mobile": f"91{phone}",
                     "otp": otp,
-                    "sender": sender_id,
                     "otp_expiry": 10,
-                    **({"template_id": template_id} if template_id else {}),
                 },
                 timeout=5,
             )
             result = resp.json()
             if result.get("type") != "success":
                 print(f"[OTP] MSG91 error: {result}")
+                return "error", result.get("message") or str(result)
+            print(f"[OTP] MSG91 ok for {phone}")
+            return "ok", None
         except Exception as e:
             print(f"[OTP] SMS send failed (non-fatal): {e}")
+            return "error", str(e)
 
 
 def _safe_user(user: dict) -> dict:
