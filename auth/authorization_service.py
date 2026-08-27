@@ -218,11 +218,18 @@ class AuthorizationService:
         return access_token, refresh_token, jti
 
     def _send_sms(self, phone: str, otp: str):
-        """Send the OTP over SMS via MSG91 v5. Never raises — returns
-        ("ok", None) on success or ("error", <detail>) so the caller can tell
-        the client that delivery failed without exposing the OTP."""
+        """Send the OTP over SMS via the MSG91 v5 Flow API. Never raises —
+        returns ("ok", None) on success or ("error", <detail>) so the caller can
+        tell the client that delivery failed without exposing the OTP.
+
+        The Flow API is used (not /api/v5/otp) because the DLT-approved template
+        fills a variable named ##num## — the OTP endpoint only injects a
+        placeholder literally named ##OTP##. MSG91_OTP_VAR overrides the key if
+        the verified template uses a different variable name."""
         auth_key = os.environ.get("MSG91_AUTH_KEY", "")
         template_id = os.environ.get("MSG91_TEMPLATE_ID", "")
+        sender = os.environ.get("MSG91_SENDER_ID", "")
+        otp_var = os.environ.get("MSG91_OTP_VAR", "num")
 
         if not auth_key or not template_id:
             missing = ", ".join(
@@ -235,16 +242,23 @@ class AuthorizationService:
             print(f"[OTP] {detail}. OTP for {phone}: {otp}")
             return "error", detail
 
+        body = {
+            "template_id": template_id,
+            "short_url": "0",
+            "recipients": [{"mobiles": f"91{phone}", otp_var: otp}],
+        }
+        if sender:
+            body["sender"] = sender
+
         try:
             resp = requests.post(
-                "https://control.msg91.com/api/v5/otp",
-                headers={"authkey": auth_key, "Content-Type": "application/json"},
-                params={
-                    "template_id": template_id,
-                    "mobile": f"91{phone}",
-                    "otp": otp,
-                    "otp_expiry": 10,
+                "https://control.msg91.com/api/v5/flow/",
+                headers={
+                    "authkey": auth_key,
+                    "Content-Type": "application/json",
+                    "accept": "application/json",
                 },
+                json=body,
                 timeout=5,
             )
             result = resp.json()
