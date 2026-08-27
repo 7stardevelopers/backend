@@ -1,3 +1,5 @@
+import random
+import string
 from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
@@ -27,6 +29,19 @@ class UsersMaster:
         row = conn.execute(sel).fetchone()
         return dict(row._mapping) if row else None
 
+    def find_by_referral_code(self, conn, code: str):
+        sel = self.t.select().where(self.t.c.referral_code == code)
+        row = conn.execute(sel).fetchone()
+        return dict(row._mapping) if row else None
+
+    def _generate_unique_referral_code(self, conn) -> str:
+        alphabet = string.ascii_uppercase + string.digits
+        for _ in range(10):
+            code = "STAR" + "".join(random.choices(alphabet, k=4))
+            if not self.find_by_referral_code(conn, code):
+                return code
+        return "STAR" + new_uuid()[:6].upper()  # astronomically unlikely fallback
+
     def create(self, conn, phone: str, role: str = "CUSTOMER"):
         user_id = new_uuid()
         ins = self.t.insert().values(
@@ -34,6 +49,8 @@ class UsersMaster:
             phone=phone,
             role=role,
             status="ACTIVE",
+            referral_code=self._generate_unique_referral_code(conn),
+            coins_balance=0,
             created_at=now_utc(),
             updated_at=now_utc(),
         )

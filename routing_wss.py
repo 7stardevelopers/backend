@@ -8,6 +8,7 @@ WSS_ROUTES = {
     "sendMessage":   _wss.on_message,
     "locationUpdate": _wss.on_location,
     "markDelivered": _wss.on_mark_delivered,
+    "joinBooking":   _wss.on_join_booking,
     "$default":      _wss.on_default,
 }
 

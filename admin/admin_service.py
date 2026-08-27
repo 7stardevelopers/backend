@@ -52,13 +52,6 @@ class AdminService:
         logs = self.modal.list_logs(connection, page=page)
         return "success", logs
 
-    def list_announcements(self, obj, connection):
-        self._require_admin(obj.pop("_role", None))
-        obj.pop("_user_id", None)
-        page = int(obj.get("page", 1))
-        announcements = self.modal.list_announcements(connection, page=page)
-        return "success", announcements
-
     def list_services(self, obj, connection):
         self._require_admin(obj.pop("_role", None))
         obj.pop("_user_id", None)
@@ -246,6 +239,21 @@ class AdminService:
         limit = int(obj.get("limit", 50))
         return "success", self.modal.list_announcements(connection, limit)
 
+    def delete_announcement(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        announcement_id = obj.get("id")
+        deleted = self.modal.delete_announcement(connection, announcement_id)
+        if not deleted:
+            raise ValueError("Announcement not found")
+        return "success", {"message": "Announcement deleted"}
+
+    def list_my_announcements(self, obj, connection):
+        obj.pop("_user_id", None)
+        role = obj.pop("_role", None) or "CUSTOMER"
+        limit = int(obj.get("limit", 10))
+        return "success", self.modal.list_announcements_for_role(connection, role, limit)
+
     def list_logs(self, obj, connection):
         self._require_admin(obj.pop("_role", None))
         obj.pop("_user_id", None)
@@ -275,6 +283,17 @@ class AdminService:
         result = ProvidersService().admin_suspend(obj, connection)
         try:
             self.modal.write_log(connection, user_id, "SUSPEND_PROVIDER", "provider", provider_id)
+        except Exception:
+            pass
+        return result
+
+    def update_provider_bio_logged(self, obj, connection):
+        user_id     = obj.get("_user_id")
+        provider_id = obj.get("id")
+        from providers.providers_service import ProvidersService
+        result = ProvidersService().admin_update_bio(obj, connection)
+        try:
+            self.modal.write_log(connection, user_id, "UPDATE_PROVIDER_BIO", "provider", provider_id)
         except Exception:
             pass
         return result

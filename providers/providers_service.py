@@ -71,6 +71,18 @@ class ProvidersService:
         self.modal.update(connection, provider["provider_id"], {"is_available": data.is_available})
         return "success", {"is_available": data.is_available}
 
+    def report_location_revoked(self, obj, connection):
+        # Authoritative server-side flip to offline — called by the worker app
+        # the moment it detects location permission was revoked, rather than
+        # relying solely on the client to remember to toggle itself off.
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        if role != "PROVIDER":
+            raise PermissionError("Provider role required")
+        provider = self._get_or_create_provider(connection, user_id)
+        self.modal.update(connection, provider["provider_id"], {"is_available": False})
+        return "success", {"is_available": False}
+
     def update_location(self, obj, connection):
         user_id = obj.pop("_user_id")
         role = obj.pop("_role", None)
@@ -96,6 +108,13 @@ class ProvidersService:
             print(f"[Location] WS broadcast failed (non-fatal): {e}")
         return "success", {"message": "Location updated"}
 
+    def admin_list_locations(self, obj, connection):
+        obj.pop("_user_id", None)
+        role = obj.pop("_role", None)
+        if role not in ("ADMIN", "SUPPORT"):
+            raise PermissionError("Admin role required")
+        return "success", self.modal.list_all_locations(connection)
+
     def get_nearby(self, obj, connection):
         user_id = obj.pop("_user_id")
         role = obj.pop("_role", None)
@@ -117,14 +136,39 @@ class ProvidersService:
         return "success", nearby
 
     def get_public_profile(self, obj, connection):
-        obj.pop("_user_id", None)
-        obj.pop("_role", None)
+        user_id = obj.pop("_user_id", None)
+        role = obj.pop("_role", None)
         provider_id = obj.get("id") or obj.get("provider_id")
         provider = self.modal.find_by_id(connection, provider_id)
         if not provider:
             raise ValueError("Provider not found")
+
+        if role not in ("ADMIN", "SUPPORT"):
+            from utilities.db_connection import get_table
+            bookings_t = get_table("bookings")
+            has_relationship = connection.execute(
+                bookings_t.select()
+                .where(bookings_t.c.customer_id == user_id)
+                .where(bookings_t.c.provider_id == provider_id)
+                .where(bookings_t.c.status.in_(["ACCEPTED", "EN_ROUTE", "IN_PROGRESS", "COMPLETED"]))
+            ).fetchone()
+            if not has_relationship:
+                raise PermissionError("No booking relationship with this provider")
+
         safe = {k: v for k, v in provider.items() if k not in ("bank_account_number", "bank_ifsc", "wallet_balance")}
         return "success", safe
+
+    def admin_update_bio(self, obj, connection):
+        role = obj.pop("_role", None)
+        obj.pop("_user_id", None)
+        if role != "ADMIN":
+            raise PermissionError("Admin role required")
+        provider_id = obj.get("id") or obj.get("provider_id")
+        bio = obj.get("bio")
+        if bio is None:
+            raise ValueError("bio is required")
+        self.modal.update(connection, provider_id, {"bio": bio})
+        return "success", {"message": "Bio updated"}
 
     def admin_list(self, obj, connection):
         role = obj.pop("_role", None)

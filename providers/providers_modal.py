@@ -26,8 +26,13 @@ class ProvidersMaster:
         return dict(row._mapping) if row else None
 
     def find_by_id(self, conn, provider_id: str):
-        sel = self.p.select().where(self.p.c.provider_id == provider_id)
-        row = conn.execute(sel).fetchone()
+        sql = text("""
+            SELECT p.*, u.name, u.photo_url
+            FROM providers p
+            JOIN users u ON u.user_id = p.user_id
+            WHERE p.provider_id = :pid
+        """)
+        row = conn.execute(sql, {"pid": provider_id}).fetchone()
         return dict(row._mapping) if row else None
 
     def create(self, conn, user_id: str):
@@ -80,6 +85,15 @@ class ProvidersMaster:
             conn.execute(self.ps.insert(), [
                 {"provider_id": provider_id, "service_id": sid} for sid in service_ids
             ])
+
+    def list_all_locations(self, conn):
+        result = conn.execute(text("""
+            SELECT p.provider_id, u.name, p.status, p.is_available,
+                   p.last_lat, p.last_lng, p.last_seen_at
+            FROM providers p
+            JOIN users u ON u.user_id = p.user_id
+        """))
+        return [dict(r._mapping) for r in result.fetchall()]
 
     def get_available_for_service(self, conn, service_id: str):
         result = conn.execute(text("""

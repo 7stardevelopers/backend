@@ -208,6 +208,8 @@ CREATE TABLE IF NOT EXISTS bookings (
     is_instant          BOOLEAN DEFAULT FALSE,
     door_otp            VARCHAR(4),
     door_otp_verified   BOOLEAN DEFAULT FALSE,
+    otp_attempt_count   INT DEFAULT 0,
+    door_otp_generated_at TIMESTAMP NULL,
     proof_photos        JSON,
     customer_notes      TEXT,
     cancellation_reason TEXT,
@@ -219,6 +221,21 @@ CREATE TABLE IF NOT EXISTS bookings (
     FOREIGN KEY (service_id) REFERENCES services(service_id),
     FOREIGN KEY (address_id) REFERENCES user_addresses(address_id),
     FOREIGN KEY (coupon_id) REFERENCES coupons(coupon_id)
+);
+
+-- CALL LOGS (masked calling via Exotel)
+CREATE TABLE IF NOT EXISTS call_logs (
+    call_id             CHAR(36) NOT NULL DEFAULT (UUID()),
+    booking_id          CHAR(36) NULL,
+    initiated_by        CHAR(36) NOT NULL,
+    target              VARCHAR(10) NOT NULL,   -- CUSTOMER | PROVIDER
+    exotel_call_sid     VARCHAR(100),
+    status              VARCHAR(20) DEFAULT 'INITIATED',
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (call_id),
+    FOREIGN KEY (booking_id) REFERENCES bookings(booking_id),
+    FOREIGN KEY (initiated_by) REFERENCES users(user_id)
 );
 
 -- BOOKING ITEMS
@@ -504,6 +521,39 @@ CREATE TABLE IF NOT EXISTS provider_locations (
 -- MIGRATION (2026-08-08): soft-delete support for user_addresses.
 -- Needed for CREATE TABLE IF NOT EXISTS above to be a no-op on existing DBs.
 ALTER TABLE user_addresses ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- MIGRATION (Phase 2, item 9): booking OTP hardening.
+-- NOTE: MySQL supports IF NOT EXISTS on ADD COLUMN, but NOT on ADD CONSTRAINT —
+-- the constraint-adding statements below are safe to run once against a fresh
+-- DB; on a DB that already has them, check information_schema.table_constraints
+-- first (see backend's one-off migration script for the exact guarded form
+-- that was actually run against the dev DB).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS otp_attempt_count INT DEFAULT 0;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS door_otp_generated_at TIMESTAMP NULL;
+
+-- MIGRATION (Phase 2, item 6): book again, same person.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS requested_provider_id CHAR(36) NULL;
+ALTER TABLE bookings ADD CONSTRAINT fk_bookings_requested_provider
+  FOREIGN KEY (requested_provider_id) REFERENCES providers(provider_id);
+
+-- MIGRATION (Phase 2, item 7): refer & earn + coins (unified wallet).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(12) NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by CHAR(36) NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS coins_balance INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD CONSTRAINT uq_users_referral_code UNIQUE (referral_code);
+ALTER TABLE users ADD CONSTRAINT fk_users_referred_by
+  FOREIGN KEY (referred_by) REFERENCES users(user_id);
+
+CREATE TABLE IF NOT EXISTS wallet_ledger (
+    id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id             CHAR(36) NOT NULL,
+    delta               INT NOT NULL,            -- positive = credit, negative = debit
+    reason              VARCHAR(30) NOT NULL,    -- REFERRAL_BONUS | BOOKING_REDEMPTION | ADMIN_ADJUST
+    booking_id          CHAR(36) NULL,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    FOREIGN KEY (booking_id) REFERENCES bookings(booking_id)
+);
 
 -- INDEXES
 -- MySQL has no CREATE INDEX IF NOT EXISTS.

@@ -30,12 +30,15 @@ class ReviewsMaster:
         return [dict(r._mapping) for r in rows]
 
     def list_for_provider(self, conn, provider_id: str, page: int = 1):
-        sel = self.r.select().where(
-            self.r.c.provider_id == provider_id
-        ).where(self.r.c.is_deleted == False).order_by(
-            self.r.c.created_at.desc()
-        ).limit(20).offset((page-1)*20)
-        rows = conn.execute(sel).fetchall()
+        sql = text("""
+            SELECT r.*, u.name AS customer_name, u.photo_url AS customer_photo
+            FROM reviews r
+            JOIN users u ON u.user_id = r.customer_id
+            WHERE r.provider_id = :pid AND r.is_deleted = FALSE
+            ORDER BY r.created_at DESC
+            LIMIT 20 OFFSET :off
+        """)
+        rows = conn.execute(sql, {"pid": provider_id, "off": (page - 1) * 20}).fetchall()
         return [dict(r._mapping) for r in rows]
 
     def list_all(self, conn, page: int = 1):
