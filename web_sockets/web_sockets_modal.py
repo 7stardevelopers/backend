@@ -20,6 +20,13 @@ class WebSocketsMaster:
     def disconnect(self, conn, connection_id: str):
         conn.execute(self.ws.delete().where(self.ws.c.connection_id == connection_id))
 
+    def set_booking(self, conn, connection_id: str, booking_id: str):
+        conn.execute(
+            self.ws.update()
+            .where(self.ws.c.connection_id == connection_id)
+            .values(booking_id=booking_id)
+        )
+
     def get_connections_for_user(self, conn, user_id: str) -> list:
         sel = self.ws.select().where(self.ws.c.user_id == user_id)
         rows = conn.execute(sel).fetchall()

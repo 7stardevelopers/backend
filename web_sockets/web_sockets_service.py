@@ -70,6 +70,17 @@ class WebSocketsService:
             MessagesMaster().mark_seen(conn, booking_id, ws_record["user_id"])
         return "success", "Delivered"
 
+    def on_join_booking(self, connection_id: str, event: dict, conn):
+        body = _parse_body(event)
+        booking_id = body.get("booking_id") or body.get("bookingId")
+        if not booking_id:
+            return "error", "booking_id required"
+        ws_record = self.modal.get_connection(conn, connection_id)
+        if not ws_record:
+            return "error", "Connection not found"
+        self.modal.set_booking(conn, connection_id, booking_id)
+        return "success", "Joined booking"
+
     def on_default(self, connection_id: str, event: dict, conn):
         return "success", "OK"
 
