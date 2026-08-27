@@ -239,6 +239,15 @@ class AdminService:
         limit = int(obj.get("limit", 50))
         return "success", self.modal.list_announcements(connection, limit)
 
+    def delete_announcement(self, obj, connection):
+        self._require_admin(obj.pop("_role", None))
+        obj.pop("_user_id", None)
+        announcement_id = obj.get("id")
+        deleted = self.modal.delete_announcement(connection, announcement_id)
+        if not deleted:
+            raise ValueError("Announcement not found")
+        return "success", {"message": "Announcement deleted"}
+
     def list_my_announcements(self, obj, connection):
         obj.pop("_user_id", None)
         role = obj.pop("_role", None) or "CUSTOMER"

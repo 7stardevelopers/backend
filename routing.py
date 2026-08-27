@@ -182,6 +182,7 @@ ROUTES = [
     ("PATCH",r"/admin/subscriptions/plans/(?P<id>[^/]+)",            _admin.update_subscription_plan,    ["id"]),
     ("GET",  "/admin/announcements",                                 _admin.list_announcements,          []),
     ("POST", "/admin/announcements",                                 _admin.send_announcement,           []),
+    ("DELETE",r"/admin/announcements/(?P<id>[^/]+)",                 _admin.delete_announcement,         ["id"]),
     ("GET",  "/announcements/mine",                                  _admin.list_my_announcements,       []),
     ("GET",  "/admin/logs",                                          _admin.list_logs,                   []),
 

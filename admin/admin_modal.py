@@ -278,8 +278,19 @@ class AdminMaster:
         return [dict(r) for r in conn.execute(text(sql), {"role": role, "lim": limit}).mappings().fetchall()]
 
     def list_announcements(self, conn, limit=50):
-        sql = "SELECT * FROM announcements ORDER BY sent_at DESC LIMIT :lim"
+        sql = """
+            SELECT a.*, u.name AS sender_name
+            FROM announcements a
+            LEFT JOIN users u ON u.user_id = a.sent_by
+            ORDER BY a.sent_at DESC
+            LIMIT :lim
+        """
         return [dict(r) for r in conn.execute(text(sql), {"lim": limit}).mappings().fetchall()]
+
+    def delete_announcement(self, conn, announcement_id: str) -> bool:
+        t = get_table("announcements")
+        result = conn.execute(t.delete().where(t.c.announcement_id == announcement_id))
+        return result.rowcount > 0
 
     def list_logs(self, conn, page=1, per_page=20, search=None):
         where  = ""
