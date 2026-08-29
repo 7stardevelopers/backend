@@ -252,9 +252,9 @@ class BookingsService:
                     WHERE p.provider_id = :pid
                 """), {"pid": booking["provider_id"]}).fetchone()
                 if row:
-                    booking["provider_name"]  = row["name"]
-                    booking["provider_photo"] = row["photo_url"]
-                    booking["provider_rating"] = float(row["avg_rating"] or 0)
+                    booking["provider_name"]  = row.name
+                    booking["provider_photo"] = row.photo_url
+                    booking["provider_rating"] = float(row.avg_rating or 0)
                 loc = ProvidersMaster().get_location(connection, booking["provider_id"])
                 if loc:
                     booking["provider_lat"] = float(loc["lat"]) if loc.get("lat") else None
@@ -268,8 +268,8 @@ class BookingsService:
                     "SELECT name, photo_url FROM users WHERE user_id = :uid"
                 ), {"uid": booking["customer_id"]}).fetchone()
                 if row:
-                    booking["customer_name"]  = row["name"]
-                    booking["customer_photo"] = row["photo_url"]
+                    booking["customer_name"]  = row.name
+                    booking["customer_photo"] = row.photo_url
             except Exception:
                 pass
         try:
