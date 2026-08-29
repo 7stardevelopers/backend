@@ -233,6 +233,12 @@ class BookingsService:
                 prov = ProvidersMaster().find_by_user_id(connection, user_id)
                 if prov and str(prov["provider_id"]) == str(booking["provider_id"]):
                     is_provider = True
+            elif role == "PROVIDER" and booking.get("status") == "PENDING":
+                # Unclaimed broadcast job — any provider may view it before
+                # deciding to accept (offering the service is checked by
+                # get_available_for_provider; this just allows the detail
+                # screen to load once they've tapped in from that list).
+                is_provider = True
             if not is_customer and not is_provider:
                 raise PermissionError("Access denied")
         booking["items"] = self.modal.get_items(connection, booking_id)
