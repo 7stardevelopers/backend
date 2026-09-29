@@ -103,7 +103,7 @@ class ProvidersService:
                 .where(bookings_t.c.status.in_(["EN_ROUTE", "IN_PROGRESS"]))
             ).fetchone()
             if active:
-                _broadcast_location_to_customer(connection, active["booking_id"], data.lat, data.lng)
+                _broadcast_location_to_customer(connection, active.booking_id, data.lat, data.lng)
         except Exception as e:
             print(f"[Location] WS broadcast failed (non-fatal): {e}")
         return "success", {"message": "Location updated"}

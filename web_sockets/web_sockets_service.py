@@ -118,7 +118,7 @@ def _broadcast_location_to_customer(conn, booking_id: str, lat, lng):
         booking = conn.execute(bookings_t.select().where(bookings_t.c.booking_id == booking_id)).fetchone()
         if not booking:
             return
-        customer_id = booking["customer_id"]
+        customer_id = booking.customer_id
         ws_rows = conn.execute(ws_t.select().where(ws_t.c.user_id == customer_id)).fetchall()
         client = boto3.client(
             "apigatewaymanagementapi",
@@ -128,7 +128,7 @@ def _broadcast_location_to_customer(conn, booking_id: str, lat, lng):
         payload = json.dumps({"message_type": "location_update", "lat": lat, "lng": lng, "booking_id": booking_id}, default=str).encode()
         for row in ws_rows:
             try:
-                client.post_to_connection(ConnectionId=row["connection_id"], Data=payload)
+                client.post_to_connection(ConnectionId=row.connection_id, Data=payload)
             except Exception:
                 pass
     except Exception as e:

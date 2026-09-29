@@ -233,6 +233,12 @@ class BookingsService:
                 prov = ProvidersMaster().find_by_user_id(connection, user_id)
                 if prov and str(prov["provider_id"]) == str(booking["provider_id"]):
                     is_provider = True
+            elif role == "PROVIDER" and booking.get("status") == "PENDING":
+                # Unclaimed broadcast job — any provider may view it before
+                # deciding to accept (offering the service is checked by
+                # get_available_for_provider; this just allows the detail
+                # screen to load once they've tapped in from that list).
+                is_provider = True
             if not is_customer and not is_provider:
                 raise PermissionError("Access denied")
         booking["items"] = self.modal.get_items(connection, booking_id)
@@ -246,9 +252,9 @@ class BookingsService:
                     WHERE p.provider_id = :pid
                 """), {"pid": booking["provider_id"]}).fetchone()
                 if row:
-                    booking["provider_name"]  = row["name"]
-                    booking["provider_photo"] = row["photo_url"]
-                    booking["provider_rating"] = float(row["avg_rating"] or 0)
+                    booking["provider_name"]  = row.name
+                    booking["provider_photo"] = row.photo_url
+                    booking["provider_rating"] = float(row.avg_rating or 0)
                 loc = ProvidersMaster().get_location(connection, booking["provider_id"])
                 if loc:
                     booking["provider_lat"] = float(loc["lat"]) if loc.get("lat") else None
@@ -262,8 +268,8 @@ class BookingsService:
                     "SELECT name, photo_url FROM users WHERE user_id = :uid"
                 ), {"uid": booking["customer_id"]}).fetchone()
                 if row:
-                    booking["customer_name"]  = row["name"]
-                    booking["customer_photo"] = row["photo_url"]
+                    booking["customer_name"]  = row.name
+                    booking["customer_photo"] = row.photo_url
             except Exception:
                 pass
         try:
