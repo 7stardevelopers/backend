@@ -25,6 +25,16 @@ class CouponsMaster:
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
+    def list_all(self, conn):
+        sel = self.c.select().order_by(self.c.c.created_at.desc())
+        rows = conn.execute(sel).fetchall()
+        return [dict(r._mapping) for r in rows]
+
+    def update(self, conn, coupon_id: str, data: dict):
+        if data.get("code"):
+            data["code"] = data["code"].upper()
+        conn.execute(self.c.update().where(self.c.c.coupon_id == coupon_id).values(**data))
+
     def user_already_used(self, conn, user_id: str, coupon_id: str) -> bool:
         sel = self.cu.select().where(
             self.cu.c.user_id == user_id

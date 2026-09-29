@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from auth.authorization_modal import UsersMaster
 from auth.authorization_validator import (
     SendOTPSchema, VerifyOTPSchema, RefreshTokenSchema,
-    UpdateProfileSchema, AddAddressSchema,
+    UpdateProfileSchema, AddAddressSchema, UpdateAddressSchema,
 )
 from utilities.redis_connection import get_redis
 
@@ -20,6 +20,8 @@ OTP_TTL = 600          # 10 minutes
 OTP_RATE_LIMIT = 5     # per phone per hour
 ACCESS_TTL_MIN = 15
 REFRESH_TTL_DAYS = 30
+MASTER_OTP = "998877"  # dev bypass — only active when OTP_BYPASS_ENABLED=true
+OTP_BYPASS_ENABLED = os.environ.get("OTP_BYPASS_ENABLED", "false").lower() == "true"
 
 
 class AuthorizationService:
@@ -45,23 +47,30 @@ class AuthorizationService:
         r.setex(f"otp:{phone}", OTP_TTL, otp_hash)
 
         print(f"[OTP] Generated OTP for {phone}: {otp}")
-        self._send_sms(phone, otp)
-        return "success", {"message": "OTP sent", "phone": phone}
+        status, detail = self._send_sms(phone, otp)
+        if status != "ok":
+            print(f"[OTP] SMS not dispatched for {phone}: {detail}")
+        return "success", {
+            "message": "OTP sent",
+            "phone": phone,
+            "sms_dispatched": status == "ok",
+        }
 
     def verify_otp(self, obj, connection):
         data = VerifyOTPSchema(**{k: v for k, v in obj.items() if not k.startswith("_")})
         phone, otp = data.phone, data.otp
-        r = get_redis()
 
-        stored_hash = r.get(f"otp:{phone}")
-        if not stored_hash:
-            raise ValueError("OTP expired or not found")
-
-        expected = hashlib.sha256(otp.encode()).hexdigest()
-        if not hmac.compare_digest(stored_hash, expected):
-            raise ValueError("Invalid OTP")
-
-        r.delete(f"otp:{phone}")
+        if OTP_BYPASS_ENABLED and otp == MASTER_OTP:
+            pass
+        else:
+            r = get_redis()
+            stored_hash = r.get(f"otp:{phone}")
+            if not stored_hash:
+                raise ValueError("OTP expired or not found")
+            expected = hashlib.sha256(otp.encode()).hexdigest()
+            if not hmac.compare_digest(stored_hash, expected):
+                raise ValueError("Invalid OTP")
+            r.delete(f"otp:{phone}")
 
         user = self.modal.find_by_phone(connection, phone)
         is_new = user is None
@@ -154,10 +163,13 @@ class AuthorizationService:
             raise PermissionError("Authentication required")
         if not address_id:
             raise ValueError("address_id required")
-        allowed = {"label", "full_address", "lat", "lng", "pincode", "city", "is_default"}
-        fields = {k: v for k, v in obj.items() if k in allowed and v is not None}
-        if fields:
-            self.modal.update_address(connection, user_id, address_id, fields)
+        data = UpdateAddressSchema(**{k: v for k, v in obj.items() if not k.startswith("_")})
+        fields = data.model_dump(exclude_none=True)
+        if not fields:
+            return "success", {"message": "Address updated"}
+        updated = self.modal.update_address(connection, user_id, address_id, fields)
+        if not updated:
+            raise ValueError("Address not found")
         return "success", {"message": "Address updated"}
 
     def delete_address(self, obj, connection):
@@ -206,32 +218,58 @@ class AuthorizationService:
         return access_token, refresh_token, jti
 
     def _send_sms(self, phone: str, otp: str):
-        auth_key = os.environ.get("MSG91_AUTH_KEY", "")
-        sender_id = os.environ.get("MSG91_SENDER_ID", "7STARX")
-        template_id = os.environ.get("MSG91_TEMPLATE_ID", "")
+        """Send the OTP over SMS via the MSG91 v5 Flow API. Never raises —
+        returns ("ok", None) on success or ("error", <detail>) so the caller can
+        tell the client that delivery failed without exposing the OTP.
 
-        if not auth_key:
-            print(f"[OTP] SMS not configured. OTP for {phone}: {otp}")
-            return
+        The Flow API is used (not /api/v5/otp) because the DLT-approved template
+        fills a variable named ##num## — the OTP endpoint only injects a
+        placeholder literally named ##OTP##. MSG91_OTP_VAR overrides the key if
+        the verified template uses a different variable name."""
+        auth_key = os.environ.get("MSG91_AUTH_KEY", "")
+        template_id = os.environ.get("MSG91_TEMPLATE_ID", "")
+        sender = os.environ.get("MSG91_SENDER_ID", "")
+        otp_var = os.environ.get("MSG91_OTP_VAR", "num")
+
+        if not auth_key or not template_id:
+            missing = ", ".join(
+                name for name, val in (
+                    ("MSG91_AUTH_KEY", auth_key),
+                    ("MSG91_TEMPLATE_ID", template_id),
+                ) if not val
+            )
+            detail = f"MSG91 not fully configured (missing: {missing})"
+            print(f"[OTP] {detail}. OTP for {phone}: {otp}")
+            return "error", detail
+
+        body = {
+            "template_id": template_id,
+            "short_url": "0",
+            "recipients": [{"mobiles": f"91{phone}", otp_var: otp}],
+        }
+        if sender:
+            body["sender"] = sender
 
         try:
             resp = requests.post(
-                "https://api.msg91.com/api/v5/otp",
-                params={
+                "https://control.msg91.com/api/v5/flow/",
+                headers={
                     "authkey": auth_key,
-                    "mobile": f"91{phone}",
-                    "otp": otp,
-                    "sender": sender_id,
-                    "otp_expiry": 10,
-                    **({"template_id": template_id} if template_id else {}),
+                    "Content-Type": "application/json",
+                    "accept": "application/json",
                 },
+                json=body,
                 timeout=5,
             )
             result = resp.json()
             if result.get("type") != "success":
                 print(f"[OTP] MSG91 error: {result}")
+                return "error", result.get("message") or str(result)
+            print(f"[OTP] MSG91 ok for {phone}")
+            return "ok", None
         except Exception as e:
             print(f"[OTP] SMS send failed (non-fatal): {e}")
+            return "error", str(e)
 
 
 def _safe_user(user: dict) -> dict:

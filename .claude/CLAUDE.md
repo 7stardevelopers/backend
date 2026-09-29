@@ -48,14 +48,14 @@ API Gateway → lambda_function.handle_rest
 
 `obj` is the merged body + query params dict, with `_user_id` and `_role` injected. Path params (e.g. `id` from `/bookings/{id}`) are also injected into `obj` by the dispatcher. Services `pop()` `_user_id`/`_role` from `obj` before passing to Pydantic validators.
 
-**Response convention:** service methods return `("success", data)` → HTTP 200, or `("created", data)` → HTTP 201. `PermissionError` → 403, `ValueError` → 400, uncaught exceptions → 500.
+**Response convention:** service methods return `("success", data)` → HTTP 200, or `("created", data)` → HTTP 201. `PermissionError` → 403 (except messages `"Token expired"`/`"Invalid token"`, which map to 401), `ValueError` → 400, uncaught exceptions → 500.
 
 ### Request flow (WebSocket)
 ```
 API Gateway WebSocket → lambda_function.handle_websocket
   → routing_wss.dispatch_wss → web_sockets/web_sockets_service.py
 ```
-Routes: `$connect`, `$disconnect`, `sendMessage`, `locationUpdate`, `markDelivered`. JWT is passed as a `?token=` query param on `$connect` (no Authorization header on WebSocket).
+Routes: `$connect`, `$disconnect`, `sendMessage`, `locationUpdate`, `markDelivered`, `$default`. JWT is passed as a `?token=` query param on `$connect` (no Authorization header on WebSocket).
 
 ### Module structure
 Every feature module follows the same three-file pattern:
@@ -88,10 +88,12 @@ Razorpay: `POST /payments/create-order` → client completes payment → `POST /
 ### Booking status machine
 ```
 PENDING → ACCEPTED → EN_ROUTE → IN_PROGRESS → COMPLETED
-PENDING → CANCELLED
-ACCEPTED → CANCELLED
+PENDING → REJECTED (provider)
+PENDING → CANCELLED (customer/admin)
+ACCEPTED → CANCELLED (customer/admin)
+IN_PROGRESS → CANCELLED (admin only)
 ```
-Transitions are role-gated via `ALLOWED_TRANSITIONS` in `bookings/bookings_service.py`. Door OTP (4-digit) is generated on booking creation; provider verifies it to move `ACCEPTED → IN_PROGRESS`.
+Transitions are role-gated via `ALLOWED_TRANSITIONS` in `bookings/bookings_service.py` — admins have broader transition rights than customers/providers. Door OTP (4-digit) is generated on booking creation; provider verifies it to move `ACCEPTED → IN_PROGRESS`.
 
 ## Key env vars
 | Var | Purpose |

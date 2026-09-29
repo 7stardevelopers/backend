@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
@@ -27,17 +28,31 @@ class SupportMaster:
         return [dict(r._mapping) for r in rows]
 
     def list_all(self, conn, status=None, priority=None, page=1):
-        sel = self.t.select().order_by(self.t.c.created_at.desc()).limit(20).offset((page-1)*20)
+        sql = """
+            SELECT t.*, u.name AS user_name, u.phone AS user_phone
+            FROM support_tickets t
+            JOIN users u ON u.user_id = t.user_id
+            WHERE 1=1
+        """
+        params = {"limit": 20, "offset": (page - 1) * 20}
         if status:
-            sel = sel.where(self.t.c.status == status)
+            sql += " AND t.status = :status"
+            params["status"] = status
         if priority:
-            sel = sel.where(self.t.c.priority == priority)
-        rows = conn.execute(sel).fetchall()
+            sql += " AND t.priority = :priority"
+            params["priority"] = priority
+        sql += " ORDER BY t.created_at DESC LIMIT :limit OFFSET :offset"
+        rows = conn.execute(text(sql), params).fetchall()
         return [dict(r._mapping) for r in rows]
 
     def get_one(self, conn, ticket_id: str):
-        sel = self.t.select().where(self.t.c.ticket_id == ticket_id)
-        row = conn.execute(sel).fetchone()
+        sql = text("""
+            SELECT t.*, u.name AS user_name, u.phone AS user_phone
+            FROM support_tickets t
+            JOIN users u ON u.user_id = t.user_id
+            WHERE t.ticket_id = :tid
+        """)
+        row = conn.execute(sql, {"tid": ticket_id}).fetchone()
         if not row:
             raise ValueError("Ticket not found")
         return dict(row._mapping)
@@ -59,6 +74,12 @@ class SupportMaster:
         return msg
 
     def get_messages(self, conn, ticket_id: str):
-        sel = self.m.select().where(self.m.c.ticket_id == ticket_id).order_by(self.m.c.created_at)
-        rows = conn.execute(sel).fetchall()
+        sql = text("""
+            SELECT m.*, u.name AS sender_name, u.role AS sender_role
+            FROM ticket_messages m
+            JOIN users u ON u.user_id = m.sender_id
+            WHERE m.ticket_id = :tid
+            ORDER BY m.created_at
+        """)
+        rows = conn.execute(sql, {"tid": ticket_id}).fetchall()
         return [dict(r._mapping) for r in rows]

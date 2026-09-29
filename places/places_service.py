@@ -1,7 +1,8 @@
 import os
 import requests as http
 
-PLACES_BASE = "https://maps.googleapis.com/maps/api/place"
+PLACES_BASE  = "https://maps.googleapis.com/maps/api/place"
+GEOCODE_BASE = "https://maps.googleapis.com/maps/api/geocode"
 
 
 class PlacesService:
@@ -65,3 +66,28 @@ class PlacesService:
 
         loc = data.get("result", {}).get("geometry", {}).get("location", {})
         return "success", {"lat": loc.get("lat"), "lng": loc.get("lng")}
+
+    def reverse_geocode(self, obj, connection):
+        obj.pop("_user_id", None)
+        obj.pop("_role", None)
+        lat = obj.get("lat")
+        lng = obj.get("lng")
+        if not lat or not lng:
+            raise ValueError("lat and lng are required")
+
+        api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "")
+        if not api_key:
+            raise ValueError("Google Places API not configured")
+
+        resp = http.get(
+            f"{GEOCODE_BASE}/json",
+            params={"latlng": f"{lat},{lng}", "key": api_key, "language": "en"},
+            timeout=5,
+        )
+        data = resp.json()
+        if data.get("status") not in ("OK", "ZERO_RESULTS"):
+            raise ValueError(f"Geocoding API error: {data.get('status')}")
+
+        results = data.get("results", [])
+        address = results[0].get("formatted_address", "Selected Location") if results else "Selected Location"
+        return "success", {"address": address, "lat": float(lat), "lng": float(lng)}

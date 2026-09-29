@@ -70,6 +70,17 @@ class WebSocketsService:
             MessagesMaster().mark_seen(conn, booking_id, ws_record["user_id"])
         return "success", "Delivered"
 
+    def on_join_booking(self, connection_id: str, event: dict, conn):
+        body = _parse_body(event)
+        booking_id = body.get("booking_id") or body.get("bookingId")
+        if not booking_id:
+            return "error", "booking_id required"
+        ws_record = self.modal.get_connection(conn, connection_id)
+        if not ws_record:
+            return "error", "Connection not found"
+        self.modal.set_booking(conn, connection_id, booking_id)
+        return "success", "Joined booking"
+
     def on_default(self, connection_id: str, event: dict, conn):
         return "success", "OK"
 
@@ -107,7 +118,7 @@ def _broadcast_location_to_customer(conn, booking_id: str, lat, lng):
         booking = conn.execute(bookings_t.select().where(bookings_t.c.booking_id == booking_id)).fetchone()
         if not booking:
             return
-        customer_id = booking["customer_id"]
+        customer_id = booking.customer_id
         ws_rows = conn.execute(ws_t.select().where(ws_t.c.user_id == customer_id)).fetchall()
         client = boto3.client(
             "apigatewaymanagementapi",
@@ -117,7 +128,7 @@ def _broadcast_location_to_customer(conn, booking_id: str, lat, lng):
         payload = json.dumps({"message_type": "location_update", "lat": lat, "lng": lng, "booking_id": booking_id}, default=str).encode()
         for row in ws_rows:
             try:
-                client.post_to_connection(ConnectionId=row["connection_id"], Data=payload)
+                client.post_to_connection(ConnectionId=row.connection_id, Data=payload)
             except Exception:
                 pass
     except Exception as e:

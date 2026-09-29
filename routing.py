@@ -1,5 +1,6 @@
 import re
 from auth.authorization_service import AuthorizationService
+from chat.messages_service import MessagesService
 from bookings.bookings_service import BookingsService
 from instant_bookings.instant_bookings_service import InstantBookingsService
 from services_catalog.services_service import ServicesService
@@ -15,6 +16,9 @@ from documents.documents_service import DocumentsService
 from admin.admin_service import AdminService
 from finance.finance_service import FinanceService
 from media.media_service import MediaService
+from calls.calls_service import CallsService
+from customers.customers_service import CustomersService
+from referrals.referrals_service import ReferralsService
 
 _auth   = AuthorizationService()
 _books  = BookingsService()
@@ -32,6 +36,10 @@ _docs   = DocumentsService()
 _admin  = AdminService()
 _fin    = FinanceService()
 _media  = MediaService()
+_msgs   = MessagesService()
+_calls  = CallsService()
+_custs  = CustomersService()
+_refs   = ReferralsService()
 
 # (METHOD, path_pattern, handler, param_names)
 # param_names: list of path param names extracted via regex group
@@ -60,14 +68,20 @@ ROUTES = [
 
     # BOOKINGS
     ("POST", "/bookings",                   _books.create,               []),
-    ("GET",  "/bookings",                   _books.list_mine,            []),
-    ("GET",  r"/bookings/(?P<id>[^/]+)$",   _books.get_detail,           ["id"]),
+    ("GET",  "/bookings",                        _books.list_mine,                 []),
+    ("GET",  "/bookings/available",              _books.list_available_for_provider, []),
+    ("GET",  "/bookings/past-providers",         _books.list_past_providers,         []),
+    ("PATCH",r"/bookings/(?P<id>[^/]+)/accept",  _books.accept_booking,             ["id"]),
+    ("GET",  r"/bookings/(?P<id>[^/]+)$",        _books.get_detail,                 ["id"]),
     ("PATCH",r"/bookings/(?P<id>[^/]+)/status", _books.update_status,    ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/cancel",  _books.cancel,          ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/otp-verify", _books.verify_door_otp, ["id"]),
+    ("POST", r"/bookings/(?P<id>[^/]+)/otp-regenerate", _books.regenerate_door_otp, ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/tip",   _books.add_tip,           ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/complete", _books.complete,        ["id"]),
-    ("POST", r"/bookings/(?P<id>[^/]+)/rebook", _books.rebook,           ["id"]),
+    ("POST", r"/bookings/(?P<id>[^/]+)/rebook",   _books.rebook,             ["id"]),
+    ("GET",  r"/bookings/(?P<id>[^/]+)/messages", _msgs.list_messages,       ["id"]),
+    ("POST", r"/bookings/(?P<id>[^/]+)/messages", _msgs.send_message,        ["id"]),
 
     # INSTANT BOOKINGS
     ("POST", "/instant-bookings",           _ibooks.create_instant,      []),
@@ -85,9 +99,12 @@ ROUTES = [
     ("GET",  "/coupons",                    _coupons.list_active,        []),
     ("POST", "/coupons",                    _coupons.admin_create,       []),
     ("DELETE",r"/coupons/(?P<id>[^/]+)",    _coupons.admin_delete,       ["id"]),
+    ("GET",  "/admin/coupons",              _coupons.admin_list_all,     []),
+    ("PATCH", r"/coupons/(?P<id>[^/]+)",    _coupons.admin_update,       ["id"]),
 
     # REVIEWS
     ("POST", "/reviews",                    _rev.create,                 []),
+    ("POST", "/provider/reviews",           _rev.create_provider_review, []),
     ("GET",  r"/reviews/service/(?P<id>[^/]+)", _rev.list_for_service,   ["id"]),
     ("GET",  r"/reviews/provider/(?P<id>[^/]+)", _rev.list_for_provider, ["id"]),
     ("GET",  "/reviews",                    _rev.list_all,               []),
@@ -99,13 +116,16 @@ ROUTES = [
     ("PATCH","/providers/me/services",       _prov.set_services,          []),
     ("PATCH","/providers/me/documents",     _prov.set_documents,         []),
     ("PATCH","/providers/me/availability",  _prov.toggle_availability,   []),
+    ("PATCH","/providers/me/location-revoked", _prov.report_location_revoked, []),
     ("PATCH","/providers/me/location",      _prov.update_location,       []),
     ("GET",  "/providers/me/earnings",      _prov.get_my_earnings,       []),
     ("GET",  "/providers/nearby",           _prov.get_nearby,            []),
     ("GET",  "/providers",                  _prov.admin_list_detailed,   []),
+    ("GET",  "/admin/providers/locations",  _prov.admin_list_locations,  []),
     ("GET",  r"/providers/(?P<id>[^/]+)$",  _prov.get_public_profile,    ["id"]),
     ("PATCH",r"/providers/(?P<id>[^/]+)/approve", _admin.approve_provider_logged, ["id"]),
     ("PATCH",r"/providers/(?P<id>[^/]+)/suspend",  _admin.suspend_provider_logged, ["id"]),
+    ("PATCH",r"/admin/providers/(?P<id>[^/]+)/bio", _admin.update_provider_bio_logged, ["id"]),
 
     # DOCUMENTS
     ("POST", "/documents/upload",           _docs.upload,                []),
@@ -140,6 +160,7 @@ ROUTES = [
     # PLACES
     ("GET",  "/places/autocomplete",        _places.autocomplete,        []),
     ("GET",  "/places/details",             _places.details,             []),
+    ("GET",  "/places/reverse-geocode",     _places.reverse_geocode,     []),
 
     # ADMIN
     ("GET",  "/admin/dashboard",            _admin.dashboard_overview,        []),
@@ -161,6 +182,8 @@ ROUTES = [
     ("PATCH",r"/admin/subscriptions/plans/(?P<id>[^/]+)",            _admin.update_subscription_plan,    ["id"]),
     ("GET",  "/admin/announcements",                                 _admin.list_announcements,          []),
     ("POST", "/admin/announcements",                                 _admin.send_announcement,           []),
+    ("DELETE",r"/admin/announcements/(?P<id>[^/]+)",                 _admin.delete_announcement,         ["id"]),
+    ("GET",  "/announcements/mine",                                  _admin.list_my_announcements,       []),
     ("GET",  "/admin/logs",                                          _admin.list_logs,                   []),
 
     # FINANCE
@@ -168,6 +191,17 @@ ROUTES = [
     ("GET",  "/finance/payouts",            _fin.payout_queue,           []),
     ("PATCH",r"/finance/payouts/(?P<id>[^/]+)", _fin.approve_payout,     ["id"]),
     ("GET",  "/finance/reports",            _fin.export_report,          []),
+
+    # CALLS (masked calling via Exotel)
+    ("POST", "/calls/initiate",        _calls.initiate_call,   []),
+    ("POST", "/calls/status-callback", _calls.status_callback, []),
+
+    # CUSTOMERS (reciprocal profile lookup, provider-facing)
+    ("GET", r"/customers/(?P<id>[^/]+)/profile", _custs.get_public_profile, ["id"]),
+
+    # REFERRALS + COINS
+    ("GET",  "/referrals/my-code", _refs.my_code, []),
+    ("POST", "/referrals/redeem",  _refs.redeem,  []),
 ]
 
 
