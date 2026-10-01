@@ -23,14 +23,15 @@ OTP_RATE_LIMIT = 5     # per phone per hour
 OTP_MAX_ATTEMPTS = 5   # wrong guesses before the OTP is invalidated
 ACCESS_TTL_MIN = 15
 REFRESH_TTL_DAYS = 30
-MASTER_OTP = "998877"  # dev bypass — only when OTP_BYPASS_ENABLED=true and never in production
+MASTER_OTP = "998877"  # testing bypass — on by default outside production, never in production
 
 
 def _otp_bypass_enabled():
-    return (
-        os.environ.get("OTP_BYPASS_ENABLED", "false").lower() == "true"
-        and not is_production()
-    )
+    """Master OTP works in local dev and staging without any config (set
+    OTP_BYPASS_ENABLED=false to turn it off there). Always off in production."""
+    if is_production():
+        return False
+    return os.environ.get("OTP_BYPASS_ENABLED", "true").lower() != "false"
 
 
 class AuthorizationService:

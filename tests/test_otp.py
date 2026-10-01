@@ -36,6 +36,13 @@ class OtpBypassTests(unittest.TestCase):
             status, _ = self._verify(auth_mod.MASTER_OTP)
             self.assertEqual(status, "success")
 
+    def test_master_otp_works_by_default_on_staging(self):
+        env = {k: v for k, v in os.environ.items() if k != "OTP_BYPASS_ENABLED"}
+        env["ENVIRONMENT"] = "staging"
+        with patch.dict(os.environ, env, clear=True):
+            status, _ = self._verify(auth_mod.MASTER_OTP)
+            self.assertEqual(status, "success")
+
     def test_master_otp_rejected_when_bypass_off(self):
         with patch.dict(os.environ, {"OTP_BYPASS_ENABLED": "false", "ENVIRONMENT": "staging"}):
             self._real_otp()
