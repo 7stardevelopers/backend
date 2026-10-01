@@ -119,7 +119,15 @@ Transitions are role-gated via `ALLOWED_TRANSITIONS` in `bookings/bookings_servi
 | `WEBSOCKET_ENDPOINT_URL` | API GW Management API URL for WS broadcasting |
 | `PLATFORM_FEE_PCT` | Platform cut from payments (default: 10) |
 | `ENVIRONMENT` | `staging` / `production` (set by template). Enables fail-closed Redis, disables master OTP in production, hides OTPs from logs |
-| `EXOTEL_CALLBACK_SECRET` | Shared secret; append `?token=<secret>` to `EXOTEL_STATUS_CALLBACK_URL` |
+| `EXOTEL_SID` / `EXOTEL_API_KEY` / `EXOTEL_API_TOKEN` | Exotel account credentials (masked calling) |
+| `EXOTEL_SUBDOMAIN` | `api.exotel.com` or `api.in.exotel.com` — must match the Exotel account |
+| `EXOPHONE` | Exotel virtual number shown to both parties |
+| `EXOTEL_STATUS_CALLBACK_URL` | `https://<api>/Prod/calls/status-callback?token=<EXOTEL_CALLBACK_SECRET>` |
+| `EXOTEL_CALLBACK_SECRET` | Required when deployed — callbacks without it are rejected |
+| `EXOTEL_RECORD` / `EXOTEL_TIME_LIMIT_SEC` | Optional: `true` to record calls; max call length (default 1800) |
+
+### Masked calling
+`calls/exotel_client.py` wraps Exotel Connect (credentials via basic auth — never in the URL). `POST /calls/initiate` rings the caller first, then bridges to the other party; both see only the ExoPhone. Server-side rate limit (20 s cooldown, 6 calls / 15 min per user per booking). Failed attempts are stored as `FAILED` rows with a safe `error_message`. `POST /calls/status-callback` accepts JSON or form-encoded bodies and stores status, duration, start/end (IST→UTC) and recording URL. `GET /calls/{id}` (participants) and `GET /admin/calls` (admin/support). Run `migrations/002_call_logs.sql` for the detail columns.
 
 ## Live Staging URL
 `https://1ipuylc4mh.execute-api.ap-south-1.amazonaws.com/Prod/`

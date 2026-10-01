@@ -1,5 +1,5 @@
-from typing import Optional
-from pydantic import BaseModel, Field
+from typing import Optional, List, Any
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class InitiateCallSchema(BaseModel):
@@ -9,6 +9,14 @@ class InitiateCallSchema(BaseModel):
 
 
 class CallStatusCallbackSchema(BaseModel):
+    """Exotel Connect status callback (JSON or form-encoded). Unknown fields ignored."""
+    model_config = ConfigDict(extra="ignore")
+
     CallSid: str
-    Status: Optional[str] = None
-    DialCallStatus: Optional[str] = None
+    Status: Optional[str] = None             # completed | failed | busy | no-answer | canceled
+    DialCallStatus: Optional[str] = None     # sent by some Exotel flows instead of Status
+    ConversationDuration: Optional[Any] = None
+    StartTime: Optional[str] = None
+    EndTime: Optional[str] = None
+    RecordingUrl: Optional[str] = None
+    Legs: Optional[List[Any]] = None

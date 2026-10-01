@@ -230,7 +230,12 @@ CREATE TABLE IF NOT EXISTS call_logs (
     initiated_by        CHAR(36) NOT NULL,
     target              VARCHAR(10) NOT NULL,   -- CUSTOMER | PROVIDER
     exotel_call_sid     VARCHAR(100),
-    status              VARCHAR(20) DEFAULT 'INITIATED',
+    status              VARCHAR(20) DEFAULT 'INITIATED',  -- INITIATED | COMPLETED | BUSY | NO-ANSWER | FAILED | CANCELED
+    duration_sec        INT NULL,
+    start_time          TIMESTAMP NULL,
+    end_time            TIMESTAMP NULL,
+    recording_url       TEXT NULL,
+    error_message       VARCHAR(255) NULL,
     created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (call_id),
@@ -621,6 +626,8 @@ CALL _add_index('payments',              'idx_payments_status',            'stat
 CALL _add_index('payout_requests',       'idx_payout_requests_prov_status', 'provider_id, status');
 CALL _add_index('support_tickets',       'idx_support_tickets_status',     'status');
 CALL _add_index('call_logs',             'idx_call_logs_sid',              'exotel_call_sid');
+CALL _add_index('call_logs',             'idx_call_logs_booking',          'booking_id, created_at');
+CALL _add_index('call_logs',             'idx_call_logs_initiated_by',     'initiated_by, created_at');
 
 DROP PROCEDURE IF EXISTS _add_index;
 

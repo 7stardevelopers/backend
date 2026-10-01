@@ -199,6 +199,8 @@ ROUTES = [
     # CALLS (masked calling via Exotel)
     ("POST", "/calls/initiate",        _calls.initiate_call,   []),
     ("POST", "/calls/status-callback", _calls.status_callback, []),
+    ("GET",  r"/calls/(?P<id>[^/]+)",  _calls.get_status,      ["id"]),
+    ("GET",  "/admin/calls",           _calls.admin_list,      []),
 
     # CUSTOMERS (reciprocal profile lookup, provider-facing)
     ("GET", r"/customers/(?P<id>[^/]+)/profile", _custs.get_public_profile, ["id"]),

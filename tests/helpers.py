@@ -45,6 +45,16 @@ CREATE TABLE wallet_ledger (
     id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, delta INTEGER, reason TEXT,
     booking_id TEXT, created_at TIMESTAMP
 );
+CREATE TABLE providers (
+    provider_id TEXT PRIMARY KEY, user_id TEXT, status TEXT DEFAULT 'APPROVED',
+    created_at TIMESTAMP
+);
+CREATE TABLE call_logs (
+    call_id TEXT PRIMARY KEY, booking_id TEXT, initiated_by TEXT, target TEXT,
+    exotel_call_sid TEXT, status TEXT, duration_sec INTEGER, start_time TIMESTAMP,
+    end_time TIMESTAMP, recording_url TEXT, error_message TEXT,
+    created_at TIMESTAMP, updated_at TIMESTAMP
+);
 CREATE TABLE bookings (
     booking_id TEXT PRIMARY KEY, customer_id TEXT, provider_id TEXT, service_id TEXT,
     status TEXT, door_otp TEXT, door_otp_verified BOOLEAN DEFAULT 0,
