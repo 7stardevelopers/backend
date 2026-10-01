@@ -130,7 +130,7 @@ Transitions are role-gated via `ALLOWED_TRANSITIONS` in `bookings/bookings_servi
 `calls/exotel_client.py` wraps Exotel Connect (credentials via basic auth — never in the URL). `POST /calls/initiate` rings the caller first, then bridges to the other party; both see only the ExoPhone. Server-side rate limit (20 s cooldown, 6 calls / 15 min per user per booking). Failed attempts are stored as `FAILED` rows with a safe `error_message`. `POST /calls/status-callback` accepts JSON or form-encoded bodies and stores status, duration, start/end (IST→UTC) and recording URL. `GET /calls/{id}` (participants) and `GET /admin/calls` (admin/support). Run `migrations/002_call_logs.sql` for the detail columns.
 
 ## Live Staging URL
-`https://1ipuylc4mh.execute-api.ap-south-1.amazonaws.com/Prod/`
+`https://g61ebs8u40.execute-api.ap-south-1.amazonaws.com/Prod/` (the apps' `EXPO_PUBLIC_API_BASE_URL`)
 
 DB: MySQL 8 on RDS t3.micro | Redis: redis.io external (not ElastiCache)
 

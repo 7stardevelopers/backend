@@ -6,7 +6,7 @@ from calls import exotel_client
 from calls.calls_modal import CallsMaster
 from calls.calls_validator import InitiateCallSchema, CallStatusCallbackSchema
 from providers.providers_modal import ProvidersMaster
-from utilities.auth_tokens import is_deployed
+from utilities.auth_tokens import is_deployed, is_production
 from utilities.db_connection import get_table
 from utilities.redis_connection import get_redis
 
@@ -70,7 +70,11 @@ class CallsService:
         except exotel_client.ExotelError as e:
             print(f"[Calls] Exotel error: {e}")   # message never contains credentials
             self._log_failure(log, str(e))
-            raise ValueError(GENERIC_FAILURE)
+            if is_production():
+                raise ValueError(GENERIC_FAILURE)
+            # Outside production show Exotel's reason so setup problems can be
+            # fixed from the app (it never includes credentials).
+            raise ValueError(f"{GENERIC_FAILURE} [{e}]")
 
         call_row = self.modal.create(connection, {**log, "exotel_call_sid": sid, "status": "INITIATED"})
         return "success", {

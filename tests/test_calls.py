@@ -94,7 +94,13 @@ class InitiateCallTests(CallsTestBase):
         post.return_value = resp
         with self.assertRaises(ValueError) as ctx:
             self.call("cust", "CUSTOMER", booking_id="b1", target="provider")
-        self.assertEqual(str(ctx.exception), svc_mod.GENERIC_FAILURE)
+        self.assertTrue(str(ctx.exception).startswith(svc_mod.GENERIC_FAILURE))
+        self.assertIn("Authentication failed", str(ctx.exception))      # shown outside production
+        with patch.dict(os.environ, {"ENVIRONMENT": "production"}):
+            self.redis.delete("call_cd:cust:b1")
+            with self.assertRaises(ValueError) as prod:
+                self.call("cust", "CUSTOMER", booking_id="b1", target="provider")
+        self.assertEqual(str(prod.exception), svc_mod.GENERIC_FAILURE)   # hidden in production
         log = self.logs()[0]
         self.assertEqual(log["status"], "FAILED")
         self.assertIn("Authentication failed", log["error_message"])
