@@ -121,6 +121,7 @@ ROUTES = [
     ("PATCH","/providers/me/documents",     _prov.set_documents,         []),
     ("PATCH","/providers/me/availability",  _prov.toggle_availability,   []),
     ("PATCH","/providers/me/location-revoked", _prov.report_location_revoked, []),
+    ("POST", "/providers/me/temp-approve",  _prov.temp_self_approve,     []),   # TEMPORARY — remove after testing
     ("PATCH","/providers/me/location",      _prov.update_location,       []),
     ("GET",  "/providers/me/earnings",      _prov.get_my_earnings,       []),
     ("GET",  "/providers/nearby",           _prov.get_nearby,            []),

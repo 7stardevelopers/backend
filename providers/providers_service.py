@@ -8,6 +8,10 @@ from notifications.notifications_service import NotificationsService
 from utilities.common_table_elements import new_uuid
 
 
+# TEMPORARY — see temp_self_approve
+TEMP_SELF_APPROVE_PHONES = {"9390233299"}
+
+
 class ProvidersService:
     def __init__(self):
         self.modal = ProvidersMaster()
@@ -77,6 +81,24 @@ class ProvidersService:
         provider = self._get_or_create_provider(connection, user_id, role)
         self.modal.update(connection, provider["provider_id"], {"is_available": data.is_available})
         return "success", {"is_available": data.is_available}
+
+    # TEMPORARY (testing only) — remove once the test worker is approved.
+    # Lets one hard-coded test number approve its own provider profile, because
+    # there is no admin account / DB access on staging yet. Never in production.
+    def temp_self_approve(self, obj, connection):
+        from utilities.auth_tokens import is_production
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        if is_production():
+            raise PermissionError("Not available")
+        provider = self._get_or_create_provider(connection, user_id, role)
+        from auth.authorization_modal import UsersMaster
+        user = UsersMaster().find_by_id(connection, user_id)
+        if not user or user.get("phone") not in TEMP_SELF_APPROVE_PHONES:
+            raise PermissionError("Not available")
+        self.modal.update(connection, provider["provider_id"], {"status": "APPROVED"})
+        print(f"[TEMP] Self-approved test provider {provider['provider_id']}")
+        return "success", {"message": "Approved (testing)", "status": "APPROVED"}
 
     def report_location_revoked(self, obj, connection):
         # Authoritative server-side flip to offline — called by the worker app
