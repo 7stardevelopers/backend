@@ -46,8 +46,13 @@ class ReferralsService:
             raise ValueError("Invalid referral code")
         if str(referrer["user_id"]) == str(user_id):
             raise ValueError("You can't use your own referral code")
+        if str(referrer.get("referred_by") or "") == str(user_id):
+            raise ValueError("You can't use the code of someone you referred")
+        if self.modal.has_completed_booking(connection, user_id):
+            raise ValueError("Referral codes can only be used before your first completed booking")
 
-        self.modal.set_referred_by(connection, user_id, referrer["user_id"])
+        if not self.modal.set_referred_by(connection, user_id, referrer["user_id"]):
+            raise ValueError("You've already used a referral code")
         self.modal.credit(connection, user_id, REFERRAL_BONUS, "REFERRAL_BONUS")
         self.modal.credit(connection, referrer["user_id"], REFERRAL_BONUS, "REFERRAL_BONUS")
 

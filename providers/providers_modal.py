@@ -74,6 +74,25 @@ class ProvidersMaster:
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
+    def list_nearby_candidates(self, conn, service_id=None) -> list:
+        """Approved, online providers with a known location — public-safe columns
+        only (no bank details, wallet or user_id)."""
+        params = {}
+        service_clause = ""
+        if service_id:
+            service_clause = "AND EXISTS (SELECT 1 FROM provider_services ps WHERE ps.provider_id = p.provider_id AND ps.service_id = :sid)"
+            params["sid"] = service_id
+        rows = conn.execute(text(f"""
+            SELECT p.provider_id, u.name, u.photo_url, p.avg_rating, p.total_reviews,
+                   p.years_experience, p.is_available, p.last_lat, p.last_lng
+            FROM providers p
+            JOIN users u ON u.user_id = p.user_id
+            WHERE p.status = 'APPROVED' AND p.is_available = TRUE
+              AND p.last_lat IS NOT NULL AND p.last_lng IS NOT NULL
+              {service_clause}
+        """), params).mappings().fetchall()
+        return [dict(r) for r in rows]
+
     def get_services(self, conn, provider_id: str):
         sel = self.ps.select().where(self.ps.c.provider_id == provider_id)
         rows = conn.execute(sel).fetchall()
@@ -123,6 +142,18 @@ class ProvidersMaster:
                 "UPDATE providers SET wallet_balance = wallet_balance - :amt WHERE provider_id = :pid"
             ), {"amt": amount, "pid": provider_id})
 
+    def lock_available_balance(self, conn, provider_id: str) -> int:
+        """SELECT ... FOR UPDATE the provider row and return wallet balance minus
+        payouts still awaiting processing (PENDING/APPROVED)."""
+        balance = conn.execute(text(
+            "SELECT wallet_balance FROM providers WHERE provider_id = :pid FOR UPDATE"
+        ), {"pid": provider_id}).scalar() or 0
+        reserved = conn.execute(text("""
+            SELECT COALESCE(SUM(amount), 0) FROM payout_requests
+            WHERE provider_id = :pid AND status IN ('PENDING', 'APPROVED')
+        """), {"pid": provider_id}).scalar() or 0
+        return int(balance) - int(reserved)
+
     def get_earnings(self, conn, provider_id: str) -> dict:
         rows = conn.execute(text("""
             SELECT earning_id, booking_id, amount, type, created_at
@@ -141,6 +172,15 @@ class ProvidersMaster:
             WHERE provider_id = :pid
         """), {"pid": provider_id}).mappings().one())
 
+        reserved = conn.execute(text("""
+            SELECT COALESCE(SUM(amount), 0) FROM payout_requests
+            WHERE provider_id = :pid AND status IN ('PENDING', 'APPROVED')
+        """), {"pid": provider_id}).scalar() or 0
+        balance = conn.execute(text(
+            "SELECT wallet_balance FROM providers WHERE provider_id = :pid"
+        ), {"pid": provider_id}).scalar() or 0
+        stats["pending_payouts"] = int(reserved)
+        stats["available_balance"] = max(0, int(balance) - int(reserved))
         return {"items": [dict(r) for r in rows], "stats": stats}
 
     def list_all_detailed(self, conn, status=None, page=1, per_page=20):

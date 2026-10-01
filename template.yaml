@@ -3,6 +3,13 @@ Transform: AWS::Serverless-2016-10-31
 Description: 7StarExperts API Backend
 
 Globals:
+  Api:
+    # Applies to the implicit ServerlessRestApi — same API id/URL as before.
+    MethodSettings:
+      - ResourcePath: "/*"
+        HttpMethod: "*"
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
   Function:
     Runtime: python3.11
     Timeout: 30
@@ -47,6 +54,7 @@ Resources:
       FunctionName: !Sub "7starexperts-api-${Environment}"
       Handler: lambda_function.handler
       CodeUri: .
+      Timeout: 28   # API Gateway gives up at 29s — fail inside Lambda first
       Description: 7StarExperts main API handler
       VpcConfig: !If
         - HasVpc

@@ -25,4 +25,4 @@ class InAppNotificationsMaster:
         ws = get_table("ws_connections")
         sel = ws.select().where(ws.c.user_id == user_id)
         rows = conn.execute(sel).fetchall()
-        return [r["connection_id"] for r in rows]
+        return [r.connection_id for r in rows]

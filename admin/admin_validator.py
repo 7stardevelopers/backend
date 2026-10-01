@@ -1,11 +1,13 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 
 class UpdateBookingSchema(BaseModel):
-    status: Optional[str] = None
+    status: Optional[Literal[
+        "PENDING", "ACCEPTED", "EN_ROUTE", "IN_PROGRESS", "COMPLETED", "CANCELLED", "REJECTED",
+    ]] = None
     provider_id: Optional[str] = None
-    notes: Optional[str] = None
+    # bookings has no notes column — unknown fields are ignored
 
 
 class CreateCategorySchema(BaseModel):
@@ -48,10 +50,10 @@ class CreateCategorySchema(BaseModel):
 
 
 class UpdateCategorySchema(BaseModel):
+    # categories has no description column — unknown fields are ignored by pydantic
     name:        Optional[str] = None
     icon:        Optional[str] = None
     color:       Optional[str] = None
-    description: Optional[str] = None
     sort_order:  Optional[int] = None
     is_active:   Optional[bool] = None
 

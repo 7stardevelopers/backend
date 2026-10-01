@@ -1,7 +1,5 @@
 import json
-import os
-import jwt
-from utilities.privacy import mask_phone
+from utilities.auth_tokens import decode_access_token
 
 
 def parse_request(event):
@@ -14,7 +12,11 @@ def parse_request(event):
     try:
         body = json.loads(raw_body) if isinstance(raw_body, str) else raw_body
     except (json.JSONDecodeError, TypeError):
+        raise ValueError("Request body must be valid JSON")
+    if body is None:
         body = {}
+    if not isinstance(body, dict):
+        raise ValueError("Request body must be a JSON object")
 
     query = event.get("queryStringParameters") or {}
     body.update({k: v for k, v in query.items() if k not in body})
@@ -33,12 +35,5 @@ def _extract_jwt(headers):
     auth = headers.get("Authorization") or headers.get("authorization") or ""
     if not auth.startswith("Bearer "):
         return None, None
-    token = auth[7:]
-    try:
-        secret = os.environ.get("JWT_SECRET", "")
-        payload = jwt.decode(token, secret, algorithms=["HS256"])
-        return payload.get("user_id"), payload.get("role")
-    except jwt.ExpiredSignatureError:
-        raise PermissionError("Token expired")
-    except jwt.InvalidTokenError:
-        raise PermissionError("Invalid token")
+    payload = decode_access_token(auth[7:])
+    return payload.get("user_id"), payload.get("role")

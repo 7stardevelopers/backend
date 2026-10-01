@@ -2,8 +2,7 @@
 CloudWatch EventBridge triggers this every 15 minutes.
 Finds bookings scheduled within the next 75 minutes and sends live-tracking push notifications.
 """
-import json
-import os
+import traceback
 
 from utilities.env_loader import load_secrets
 from utilities.db_connection import get_connection
@@ -18,18 +17,20 @@ def handler(event, context):
         return {"statusCode": 200, "body": "OK"}
     except Exception as e:
         print(f"[LocationTrigger] Error: {e}")
+        traceback.print_exc()
         return {"statusCode": 500, "body": str(e)}
 
 
 def _process_upcoming_bookings(conn):
     from sqlalchemy import text
     rows = conn.execute(text("""
-        SELECT b.booking_id, b.customer_id, b.provider_id, b.scheduled_at
+        SELECT b.booking_id, b.customer_id, b.provider_id, p.user_id AS provider_user_id, b.scheduled_at
         FROM bookings b
+        LEFT JOIN providers p ON p.provider_id = b.provider_id
         WHERE b.status = 'ACCEPTED'
           AND b.scheduled_at BETWEEN NOW() AND NOW() + INTERVAL 75 MINUTE
-          AND COALESCE(JSON_EXTRACT(b.service_snapshot, '$.location_triggered'), FALSE) <> TRUE
-    """)).fetchall()
+          AND JSON_EXTRACT(b.service_snapshot, '$.location_triggered') IS NULL
+    """)).mappings().fetchall()
 
     if not rows:
         return
@@ -40,7 +41,7 @@ def _process_upcoming_bookings(conn):
     for row in rows:
         booking_id = row["booking_id"]
         customer_id = row["customer_id"]
-        provider_id = row["provider_id"]
+        provider_user_id = row["provider_user_id"]
         try:
             if customer_id:
                 notif.send_push(
@@ -50,10 +51,10 @@ def _process_upcoming_bookings(conn):
                     body="Live tracking is now active. You can track your expert in real-time.",
                     data={"type": "live_tracking_active", "booking_id": str(booking_id)},
                 )
-            if provider_id:
+            if provider_user_id:
                 notif.send_push(
                     connection=conn,
-                    user_ids=[str(provider_id)],
+                    user_ids=[str(provider_user_id)],
                     title="Time to head out!",
                     body="Your appointment is in less than 75 minutes. Start navigating now.",
                     data={"type": "navigate_now", "booking_id": str(booking_id)},

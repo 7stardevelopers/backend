@@ -71,10 +71,8 @@ class SubscriptionsMaster:
         )
         return sub
 
-    def increment_bookings_used(self, conn, user_id: str):
-        sub = self.get_active_subscription(conn, user_id)
-        if sub:
-            conn.execute(
-                self.subs.update().where(self.subs.c.subscription_id == sub["subscription_id"])
-                .values(bookings_used=sub["bookings_used"] + 1)
-            )
+    def increment_bookings_used(self, conn, subscription_id: str):
+        conn.execute(
+            self.subs.update().where(self.subs.c.subscription_id == subscription_id)
+            .values(bookings_used=self.subs.c.bookings_used + 1)
+        )

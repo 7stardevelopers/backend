@@ -1,14 +1,17 @@
 import json
+import traceback
 from utilities.env_loader import load_secrets
 from utilities.db_connection import get_connection, get_engine
+from utilities.auth_tokens import get_jwt_secret
 
 # Must run before routing imports: routing.py instantiates all services at module
 # level, whose __init__ methods access metadata.tables[...] which requires reflect().
 load_secrets()
+get_jwt_secret()  # fail at cold start rather than serve requests with a missing key
 get_engine()
 
 from request_handler import parse_request
-from routing import dispatch_rest
+from routing import dispatch_rest, RouteNotFound
 from routing_wss import dispatch_wss
 
 
@@ -38,6 +41,8 @@ def handle_rest(event, context):
             )
         code = {"success": 200, "created": 201}.get(status, 400)
         return response(code, {"status": status, "data": data})
+    except RouteNotFound as e:
+        return response(404, {"status": "error", "message": str(e)})
     except PermissionError as e:
         msg = str(e)
         print(f"[FORBIDDEN] {method} {path}: {msg}")
@@ -49,6 +54,7 @@ def handle_rest(event, context):
         return response(400, {"status": "error", "message": str(e)})
     except Exception as e:
         print(f"[ERROR] Unhandled {method} {path}: {e}")
+        traceback.print_exc()
         return response(500, {"status": "error", "message": "Internal server error"})
 
 
@@ -60,6 +66,11 @@ def handle_websocket(event, context):
             status, data = dispatch_wss(route, conn_id, event, conn)
     except Exception as e:
         print(f"[WSS ERROR] {e}")
+        traceback.print_exc()
+        status, data = "error", "Internal error"
+    # For $connect the status code decides whether API Gateway accepts the socket
+    if route == "$connect" and status != "success":
+        return {"statusCode": 401 if data == "Unauthorized" else 500, "body": str(data)}
     return {"statusCode": 200, "body": "OK"}
 
 

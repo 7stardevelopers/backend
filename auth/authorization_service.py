@@ -1,6 +1,5 @@
 import os
-import random
-import string
+import secrets
 import hashlib
 import hmac
 import uuid
@@ -14,14 +13,24 @@ from auth.authorization_validator import (
     UpdateProfileSchema, AddAddressSchema, UpdateAddressSchema,
 )
 from utilities.redis_connection import get_redis
+from utilities.auth_tokens import (
+    get_jwt_secret, decode_refresh_token, is_deployed, is_production,
+)
 
 
 OTP_TTL = 600          # 10 minutes
 OTP_RATE_LIMIT = 5     # per phone per hour
+OTP_MAX_ATTEMPTS = 5   # wrong guesses before the OTP is invalidated
 ACCESS_TTL_MIN = 15
 REFRESH_TTL_DAYS = 30
-MASTER_OTP = "998877"  # dev bypass — only active when OTP_BYPASS_ENABLED=true
-OTP_BYPASS_ENABLED = os.environ.get("OTP_BYPASS_ENABLED", "false").lower() == "true"
+MASTER_OTP = "998877"  # dev bypass — only when OTP_BYPASS_ENABLED=true and never in production
+
+
+def _otp_bypass_enabled():
+    return (
+        os.environ.get("OTP_BYPASS_ENABLED", "false").lower() == "true"
+        and not is_production()
+    )
 
 
 class AuthorizationService:
@@ -37,16 +46,16 @@ class AuthorizationService:
 
         rate_key = f"otp_rate:{phone}"
         count = r.incr(rate_key)
-        if count == 1:
+        if r.ttl(rate_key) < 0:
             r.expire(rate_key, 3600)
         if count > OTP_RATE_LIMIT:
             raise ValueError("Too many OTP requests. Try again in an hour.")
 
-        otp = "".join(random.choices(string.digits, k=6))
+        otp = f"{secrets.randbelow(10**6):06d}"
         otp_hash = hashlib.sha256(otp.encode()).hexdigest()
         r.setex(f"otp:{phone}", OTP_TTL, otp_hash)
+        r.delete(f"otp_attempts:{phone}")
 
-        print(f"[OTP] Generated OTP for {phone}: {otp}")
         status, detail = self._send_sms(phone, otp)
         if status != "ok":
             print(f"[OTP] SMS not dispatched for {phone}: {detail}")
@@ -60,19 +69,30 @@ class AuthorizationService:
         data = VerifyOTPSchema(**{k: v for k, v in obj.items() if not k.startswith("_")})
         phone, otp = data.phone, data.otp
 
-        if OTP_BYPASS_ENABLED and otp == MASTER_OTP:
+        if _otp_bypass_enabled() and otp == MASTER_OTP:
             pass
         else:
             r = get_redis()
-            stored_hash = r.get(f"otp:{phone}")
+            otp_key, attempts_key = f"otp:{phone}", f"otp_attempts:{phone}"
+            stored_hash = r.get(otp_key)
             if not stored_hash:
                 raise ValueError("OTP expired or not found")
             expected = hashlib.sha256(otp.encode()).hexdigest()
             if not hmac.compare_digest(stored_hash, expected):
+                attempts = r.incr(attempts_key)
+                if r.ttl(attempts_key) < 0:
+                    r.expire(attempts_key, OTP_TTL)
+                if attempts >= OTP_MAX_ATTEMPTS:
+                    r.delete(otp_key)
+                    r.delete(attempts_key)
+                    raise ValueError("Too many wrong attempts. Request a new OTP.")
                 raise ValueError("Invalid OTP")
-            r.delete(f"otp:{phone}")
+            r.delete(otp_key)
+            r.delete(attempts_key)
 
         user = self.modal.find_by_phone(connection, phone)
+        if user and user.get("status") != "ACTIVE":
+            raise PermissionError("Account inactive")
         is_new = user is None
         if is_new:
             user = self.modal.create(connection, phone, role=data.role)
@@ -98,13 +118,7 @@ class AuthorizationService:
     def refresh_token(self, obj, connection):
         raw = {k: v for k, v in obj.items() if not k.startswith("_")}
         data = RefreshTokenSchema(**raw)
-        secret = os.environ.get("JWT_SECRET", "")
-        try:
-            payload = jwt.decode(data.refresh_token, secret, algorithms=["HS256"])
-        except jwt.ExpiredSignatureError:
-            raise PermissionError("Refresh token expired")
-        except jwt.InvalidTokenError:
-            raise PermissionError("Invalid refresh token")
+        payload = decode_refresh_token(data.refresh_token)
 
         jti = payload.get("jti")
         record = self.modal.find_refresh_token(connection, jti)
@@ -186,31 +200,30 @@ class AuthorizationService:
     def logout(self, obj, connection):
         refresh_token = obj.get("refresh_token")
         if refresh_token:
-            secret = os.environ.get("JWT_SECRET", "")
             try:
-                payload = jwt.decode(refresh_token, secret, algorithms=["HS256"])
-                jti = payload.get("jti")
-                if jti:
-                    self.modal.revoke_refresh_token(connection, jti)
-            except jwt.InvalidTokenError:
+                payload = decode_refresh_token(refresh_token)
+                self.modal.revoke_refresh_token(connection, payload["jti"])
+            except (PermissionError, KeyError):
                 pass
         return "success", {"message": "Logged out"}
 
     # ── helpers ───────────────────────────────────────────────────────
 
     def _generate_tokens(self, user):
-        secret = os.environ.get("JWT_SECRET", "change-me-in-production")
+        secret = get_jwt_secret()
         jti = str(uuid.uuid4())
 
         access_payload = {
             "user_id": user["user_id"],
             "role": user["role"],
+            "typ": "access",
             "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TTL_MIN),
         }
         refresh_payload = {
             "user_id": user["user_id"],
             "role": user["role"],
             "jti": jti,
+            "typ": "refresh",
             "exp": datetime.now(timezone.utc) + timedelta(days=REFRESH_TTL_DAYS),
         }
         access_token = jwt.encode(access_payload, secret, algorithm="HS256")
@@ -239,7 +252,10 @@ class AuthorizationService:
                 ) if not val
             )
             detail = f"MSG91 not fully configured (missing: {missing})"
-            print(f"[OTP] {detail}. OTP for {phone}: {otp}")
+            if is_deployed():
+                print(f"[OTP] {detail}")
+            else:
+                print(f"[OTP] {detail}. Local dev OTP for {phone}: {otp}")
             return "error", detail
 
         body = {

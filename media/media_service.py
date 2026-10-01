@@ -25,7 +25,9 @@ class MediaService:
         ext = ALLOWED_CONTENT_TYPES[content_type]
         bucket = os.environ.get("S3_MEDIA_BUCKET", "7starexperts-media-staging")
         bucket_region = os.environ.get("AWS_REGION_NAME", "ap-south-1")
-        key = f"{folder}/{new_uuid()}{ext}"
+        # Scope every upload to its owner so a URL can't be passed off as someone
+        # else's document (checked in providers_service.set_documents).
+        key = f"{folder}/{user_id}/{new_uuid()}{ext}"
 
         s3 = boto3.client("s3", region_name=bucket_region, config=Config(signature_version='s3v4'))
         upload_url = s3.generate_presigned_url(
@@ -36,3 +38,11 @@ class MediaService:
         object_url = f"https://{bucket}.s3.{bucket_region}.amazonaws.com/{key}"
 
         return "success", {"upload_url": upload_url, "object_url": object_url}
+
+
+def is_own_upload(url: str, user_id: str, folder: str) -> bool:
+    """True if url points at an object this user uploaded into folder via /media/presign."""
+    bucket = os.environ.get("S3_MEDIA_BUCKET", "7starexperts-media-staging")
+    region = os.environ.get("AWS_REGION_NAME", "ap-south-1")
+    prefix = f"https://{bucket}.s3.{region}.amazonaws.com/{folder}/{user_id}/"
+    return isinstance(url, str) and url.startswith(prefix) and ".." not in url

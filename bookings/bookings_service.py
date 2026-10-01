@@ -1,3 +1,4 @@
+import hmac
 import os
 import razorpay
 from datetime import datetime, timezone
@@ -7,32 +8,33 @@ from bookings.bookings_modal import BookingsMaster
 from bookings.bookings_validator import (
     CreateBookingSchema, UpdateStatusSchema, VerifyDoorOTPSchema, AddTipSchema
 )
-from coupons.coupons_modal import CouponsMaster
+from bookings.booking_pricing import price_booking, apply_booking_side_effects, release_booking_side_effects
 from notifications.notifications_service import NotificationsService
 from payments.payment_modal import PaymentMaster
 from providers.provider_matching import match_provider
 from providers.providers_modal import ProvidersMaster
-from subscriptions.subscriptions_modal import SubscriptionsMaster
 from utilities.common_table_elements import new_uuid, now_utc
 from utilities.db_connection import get_table
 
 DOOR_OTP_TTL_SECONDS = 3600   # 1 hour — regenerated on EN_ROUTE anyway, this is a backstop
 MAX_OTP_ATTEMPTS = 5
 
+# PENDING → ACCEPTED goes through accept_booking (claim) and
+# EN_ROUTE/ACCEPTED → IN_PROGRESS only through verify_door_otp, so neither the
+# claim nor the door OTP can be bypassed via PATCH /status. Provider COMPLETED
+# goes through complete().
 ALLOWED_TRANSITIONS = {
     "PROVIDER": {
-        "PENDING":     ["ACCEPTED", "REJECTED"],
         "ACCEPTED":    ["EN_ROUTE"],
-        "EN_ROUTE":    ["IN_PROGRESS"],
-        "IN_PROGRESS": ["COMPLETED"],
     },
     "CUSTOMER": {
         "PENDING":  ["CANCELLED"],
         "ACCEPTED": ["CANCELLED"],
     },
     "ADMIN": {
-        "PENDING":  ["CANCELLED", "ACCEPTED"],
+        "PENDING":  ["CANCELLED"],
         "ACCEPTED": ["CANCELLED"],
+        "EN_ROUTE": ["CANCELLED"],
         "IN_PROGRESS": ["COMPLETED", "CANCELLED"],
     },
 }
@@ -60,24 +62,10 @@ class BookingsService:
             raise PermissionError("Only customers can create bookings")
 
         validated = CreateBookingSchema(**obj)
-        sub_total = validated.sub_total
-        discount = validated.discount
-
-        sub_modal = SubscriptionsMaster()
-        active_sub = sub_modal.get_active_subscription(connection, user_id)
-        if active_sub:
-            plan = sub_modal.get_plan(connection, active_sub["plan_id"])
-            if plan and plan.get("discount_pct"):
-                sub_discount = int(sub_total * plan["discount_pct"] / 100)
-                discount += sub_discount
-
-        total_amount = max(0, sub_total - discount)
-
-        if validated.coins_used > 0:
-            from referrals.referrals_modal import ReferralsMaster
-            balance = ReferralsMaster().get_balance(connection, user_id)
-            if validated.coins_used > balance:
-                raise ValueError("You don't have enough coins for this redemption")
+        pricing = price_booking(
+            connection, user_id, validated.service_id,
+            items=validated.items, coupon_id=validated.coupon_id, coins_used=validated.coins_used,
+        )
 
         booking_data = {
             "customer_id": user_id,
@@ -86,10 +74,10 @@ class BookingsService:
             "address_id": validated.address_id,
             "address_snapshot": validated.address_snapshot,
             "service_snapshot": validated.service_snapshot,
-            "sub_total": sub_total,
-            "discount": discount,
-            "total_amount": total_amount,
-            "coupon_id": validated.coupon_id,
+            "sub_total": pricing["sub_total"],
+            "discount": pricing["discount"],
+            "total_amount": pricing["total_amount"],
+            "coupon_id": validated.coupon_id if pricing["coupon"] else None,
             "is_instant": validated.is_instant,
             "customer_notes": validated.customer_notes,
             "requested_provider_id": validated.requested_provider_id,
@@ -97,6 +85,9 @@ class BookingsService:
             "payment_status": "PENDING",
         }
         booking = self.modal.create(connection, booking_data)
+        apply_booking_side_effects(connection, user_id, booking["booking_id"], pricing)
+        if pricing["items"]:
+            self.modal.create_items(connection, booking["booking_id"], pricing["items"])
 
         # "Book again" — try to directly assign the requested provider if
         # they're approved, currently online, and still offer this service.
@@ -127,32 +118,6 @@ class BookingsService:
                             )
             except Exception as e:
                 print(f"[Rebook] Direct-assign failed (non-fatal, falling back to broadcast): {e}")
-
-        if active_sub:
-            try:
-                sub_modal.increment_bookings_used(connection, user_id)
-            except Exception as e:
-                print(f"[Subscription] increment_bookings_used failed (non-fatal): {e}")
-
-        if validated.coupon_id:
-            try:
-                CouponsMaster().record_use(connection, validated.coupon_id, user_id, booking["booking_id"])
-            except Exception as e:
-                print(f"[Coupon] record_use failed (non-fatal): {e}")
-
-        if validated.coins_used > 0:
-            from referrals.referrals_modal import ReferralsMaster
-            debited = ReferralsMaster().debit(
-                connection, user_id, validated.coins_used, "BOOKING_REDEMPTION", booking["booking_id"]
-            )
-            if not debited:
-                # Balance was checked above, inside the same transaction — this
-                # should be unreachable, but never silently confirm a discount
-                # that was never actually paid for out of the wallet.
-                raise ValueError("Could not redeem coins — balance changed. Please try again.")
-
-        if validated.items:
-            self.modal.create_items(connection, booking["booking_id"], validated.items)
 
         # Notify nearby available providers — booking stays PENDING, first to accept gets it
         # (skipped if the requested provider was already directly assigned above)
@@ -190,6 +155,8 @@ class BookingsService:
             body="We're finding the best expert for you.",
             data={"type": "booking_confirmed", "booking_id": booking["booking_id"]},
         )
+        booking["coins_used"] = pricing["coins_used"]
+        self._hide_door_otp(booking, role)
         return "created", booking
 
     def list_mine(self, obj, connection):
@@ -233,7 +200,7 @@ class BookingsService:
                 prov = ProvidersMaster().find_by_user_id(connection, user_id)
                 if prov and str(prov["provider_id"]) == str(booking["provider_id"]):
                     is_provider = True
-            elif role == "PROVIDER" and booking.get("status") == "PENDING":
+            elif role == "PROVIDER" and booking.get("status") == "PENDING" and _is_approved_provider(connection, user_id):
                 # Unclaimed broadcast job — any provider may view it before
                 # deciding to accept (offering the service is checked by
                 # get_available_for_provider; this just allows the detail
@@ -300,7 +267,7 @@ class BookingsService:
             raise PermissionError("Provider role required")
         prov_master = ProvidersMaster()
         provider = prov_master.find_by_user_id(connection, user_id)
-        if not provider:
+        if not provider or provider.get("status") != "APPROVED":
             return "success", []
 
         lat = obj.get("lat")
@@ -332,6 +299,8 @@ class BookingsService:
         provider = ProvidersMaster().find_by_user_id(connection, user_id)
         if not provider:
             raise ValueError("Provider profile not found")
+        if provider.get("status") != "APPROVED":
+            raise PermissionError("Your provider account is not approved yet")
         claimed = self.modal.claim_booking(connection, booking_id, provider["provider_id"])
         if not claimed:
             raise ValueError("Booking is no longer available — another provider may have accepted it")
@@ -357,11 +326,21 @@ class BookingsService:
             prov = ProvidersMaster().find_by_user_id(connection, user_id)
             if not prov or str(prov["provider_id"]) != str(booking.get("provider_id")):
                 raise PermissionError("You are not assigned to this booking")
+        elif role == "CUSTOMER":
+            if str(booking.get("customer_id")) != str(user_id):
+                raise PermissionError("Access denied")
+        elif role != "ADMIN":
+            raise PermissionError("Access denied")
 
         allowed = ALLOWED_TRANSITIONS.get(role, {}).get(booking["status"], [])
         if new_status not in allowed:
             raise ValueError(f"Cannot transition from {booking['status']} to {new_status}")
-        updated = self.modal.update_status(connection, booking_id, new_status)
+        if new_status == "CANCELLED":
+            # Same path as POST /cancel so refunds/notifications always run
+            updated = self._do_cancel(connection, booking)
+            self._hide_door_otp(updated, role)
+            return "success", updated
+        updated = self.modal.update_status(connection, booking_id, new_status, expected_status=booking["status"])
         if new_status == "EN_ROUTE":
             # Fresh OTP + reset lockout/TTL clock — the booking may have been
             # created hours or days ago, and any earlier failed attempts
@@ -385,7 +364,7 @@ class BookingsService:
             raise ValueError("Booking must be IN_PROGRESS to complete")
         if proof_photos:
             self.modal.update_proof_photos(connection, booking_id, proof_photos)
-        updated = self.modal.update_status(connection, booking_id, "COMPLETED")
+        updated = self.modal.update_status(connection, booking_id, "COMPLETED", expected_status="IN_PROGRESS")
         self._notify_status_change(connection, updated, "COMPLETED")
         return "success", {"message": "Booking completed"}
 
@@ -398,7 +377,28 @@ class BookingsService:
             raise PermissionError("Access denied")
         if booking["status"] not in ("PENDING", "ACCEPTED"):
             raise ValueError(f"Cannot cancel booking in {booking['status']} status")
-        updated = self.modal.update_status(connection, booking_id, "CANCELLED")
+        return "success", self._do_cancel(connection, booking)
+
+    def _do_cancel(self, connection, booking):
+        booking_id = booking["booking_id"]
+        updated = self.modal.update_status(
+            connection, booking_id, "CANCELLED", expected_status=booking["status"]
+        )
+        release_booking_side_effects(connection, booking)
+        self._notify_status_change(connection, updated, "CANCELLED")
+        if booking.get("provider_id"):
+            try:
+                prov = ProvidersMaster().find_by_id(connection, booking["provider_id"])
+                if prov:
+                    self.notif.send_push(
+                        connection=connection,
+                        user_ids=[prov["user_id"]],
+                        title="Booking Cancelled",
+                        body="A booking assigned to you has been cancelled.",
+                        data={"type": "booking_update", "booking_id": booking_id, "status": "CANCELLED"},
+                    )
+            except Exception as e:
+                print(f"[Cancel] Provider notification failed (non-fatal): {e}")
 
         if booking.get("payment_status") == "PAID" and booking.get("payment_id"):
             try:
@@ -414,7 +414,7 @@ class BookingsService:
             except Exception as e:
                 print(f"[Cancel] Refund initiation failed (non-fatal): {e}")
 
-        return "success", updated
+        return updated
 
     def verify_door_otp(self, obj, connection):
         user_id = obj.pop("_user_id")
@@ -429,6 +429,9 @@ class BookingsService:
         if not prov or str(prov["provider_id"]) != str(booking.get("provider_id")):
             raise PermissionError("You are not assigned to this booking")
 
+        if booking["status"] not in ("ACCEPTED", "EN_ROUTE") or booking.get("door_otp_verified"):
+            raise ValueError(f"Cannot start a job that is {booking['status']}")
+
         if (booking.get("otp_attempt_count") or 0) >= MAX_OTP_ATTEMPTS:
             raise ValueError("Too many incorrect attempts. Ask the customer to resend the OTP.")
 
@@ -438,15 +441,23 @@ class BookingsService:
             if (now - generated_at).total_seconds() > DOOR_OTP_TTL_SECONDS:
                 raise ValueError("This OTP has expired. Ask the customer to resend it.")
 
-        verified = self.modal.verify_door_otp(connection, booking_id, data.otp)
-        if not verified:
-            attempts = self.modal.record_failed_otp_attempt(connection, booking_id)
+        # Compare before writing anything: a wrong guess raises, which rolls back
+        # this request's transaction — so the attempt is recorded on its own
+        # committed connection, otherwise the lockout would never take effect.
+        if not hmac.compare_digest(str(booking.get("door_otp") or ""), data.otp):
+            attempts = self.modal.record_failed_otp_attempt_committed(booking_id)
             remaining = max(0, MAX_OTP_ATTEMPTS - attempts)
             if remaining:
                 raise ValueError(f"Invalid door OTP. {remaining} attempt(s) remaining.")
             raise ValueError("Invalid door OTP. Too many attempts — ask the customer to resend it.")
 
-        self.modal.update_status(connection, booking_id, "IN_PROGRESS")
+        if not self.modal.verify_door_otp(connection, booking_id, data.otp):
+            # OTP was right, so the booking changed underneath us (e.g. cancelled)
+            current = self.modal.read_one(connection, booking_id)
+            raise ValueError(f"Cannot start a job that is {current['status']}")
+
+        updated = self.modal.read_one(connection, booking_id)
+        self._notify_status_change(connection, updated, "IN_PROGRESS")
         return "success", {"message": "OTP verified. Job started."}
 
     def regenerate_door_otp(self, obj, connection):
@@ -468,6 +479,8 @@ class BookingsService:
         if role != "CUSTOMER":
             raise PermissionError("Only customers can add tips")
         booking = self.modal.read_one(connection, booking_id)
+        if str(booking.get("customer_id")) != str(user_id):
+            raise PermissionError("Access denied")
         if booking["status"] != "COMPLETED":
             raise ValueError("Can only tip on completed bookings")
         data = AddTipSchema(**{k: v for k, v in obj.items() if k not in ("id", "_user_id", "_role")})
@@ -495,15 +508,19 @@ class BookingsService:
         booking = self.modal.read_one(connection, booking_id)
         if str(booking.get("customer_id")) != str(user_id):
             raise PermissionError("Access denied")
+        if not obj.get("scheduled_at"):
+            raise ValueError("scheduled_at is required to book again")
+        items = [
+            {"sub_service_id": i["sub_service_id"], "quantity": i.get("quantity") or 1}
+            for i in self.modal.get_items(connection, booking_id)
+        ]
         new_obj = {
             "_user_id": user_id,
             "_role": role,
             "service_id": booking["service_id"],
-            "scheduled_at": obj.get("scheduled_at", booking["scheduled_at"]),
+            "scheduled_at": obj["scheduled_at"],
             "address_id": booking.get("address_id"),
-            "sub_total": booking["sub_total"],
-            "discount": 0,
-            "total_amount": booking["sub_total"],
+            "items": items or None,
             "service_snapshot": booking.get("service_snapshot"),
             "address_snapshot": booking.get("address_snapshot"),
             "requested_provider_id": booking.get("provider_id"),
@@ -529,3 +546,8 @@ class BookingsService:
                 )
             except Exception as e:
                 print(f"[Notify] Status notification failed (non-fatal): {e}")
+
+
+def _is_approved_provider(connection, user_id) -> bool:
+    prov = ProvidersMaster().find_by_user_id(connection, user_id)
+    return bool(prov) and prov.get("status") == "APPROVED"

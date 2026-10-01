@@ -1,13 +1,12 @@
-import json
-import os
-import boto3
-
 from notifications.in_app_notifications.in_app_notifications_modal import InAppNotificationsMaster
+from utilities.ws_push import push_to_connections
 
 ALLOWLISTED_TYPES = {
     "booking_confirmed", "booking_update", "job_request", "payment",
     "provider_approved", "support_reply", "announcement", "system",
     "booking_cancelled", "new_message",
+    "booking_accepted", "payment_confirmed", "job_available", "instant_job",
+    "instant_booking_confirmed", "live_tracking_active", "navigate_now",
 }
 
 
@@ -22,24 +21,6 @@ class InAppNotificationsService:
             try:
                 notif = self.modal.create(connection, uid, title, body, notif_type, data)
                 connection_ids = self.modal.get_connections_for_user(connection, uid)
-                for cid in connection_ids:
-                    self._push_to_ws(cid, notif)
+                push_to_connections(connection, connection_ids, {"message_type": "notification", **notif})
             except Exception as e:
                 print(f"[InApp] record_and_push failed for user {uid} (non-fatal): {e}")
-
-    def _push_to_ws(self, connection_id: str, payload: dict):
-        endpoint = os.environ.get("WEBSOCKET_ENDPOINT_URL", "")
-        if not endpoint:
-            return
-        try:
-            client = boto3.client(
-                "apigatewaymanagementapi",
-                endpoint_url=endpoint,
-                region_name=os.environ.get("AWS_REGION_NAME", "ap-south-1"),
-            )
-            client.post_to_connection(
-                ConnectionId=connection_id,
-                Data=json.dumps({"message_type": "notification", **payload}, default=str).encode(),
-            )
-        except Exception as e:
-            print(f"[InApp] WS push failed for {connection_id} (non-fatal): {e}")

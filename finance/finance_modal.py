@@ -1,3 +1,4 @@
+import os
 from sqlalchemy import text
 from utilities.db_connection import get_table
 
@@ -17,7 +18,7 @@ class FinanceMaster:
 
     def get_overview(self, conn) -> dict:
         gmv = conn.execute(text("SELECT COALESCE(SUM(amount),0) FROM payments WHERE status='PAID'")).scalar()
-        platform_fee_pct = 10
+        platform_fee_pct = float(os.environ.get("PLATFORM_FEE_PCT", "10"))
         platform_fees = int((gmv or 0) * platform_fee_pct / 100)
         total_payouts = conn.execute(text("SELECT COALESCE(SUM(amount),0) FROM payout_requests WHERE status='PROCESSED'")).scalar()
         pending_payouts = conn.execute(text("SELECT COALESCE(SUM(amount),0) FROM payout_requests WHERE status='PENDING'")).scalar()
@@ -37,10 +38,17 @@ class FinanceMaster:
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
-    def update_payout(self, conn, payout_id: str, fields: dict):
+    def get_payout(self, conn, payout_id: str):
+        row = conn.execute(self.payout.select().where(self.payout.c.payout_id == payout_id)).fetchone()
+        return dict(row._mapping) if row else None
+
+    def update_payout(self, conn, payout_id: str, fields: dict, expected_status=None) -> bool:
         from utilities.common_table_elements import now_utc
         fields["processed_at"] = now_utc()
-        conn.execute(self.payout.update().where(self.payout.c.payout_id == payout_id).values(**fields))
+        upd = self.payout.update().where(self.payout.c.payout_id == payout_id)
+        if expected_status is not None:
+            upd = upd.where(self.payout.c.status == expected_status)
+        return conn.execute(upd.values(**fields)).rowcount > 0
 
     def get_report(self, conn, from_date: str = None, to_date: str = None) -> list:
         query = "SELECT p.*, b.booking_id FROM payments p LEFT JOIN bookings b ON p.booking_id = b.booking_id WHERE p.status='PAID'"

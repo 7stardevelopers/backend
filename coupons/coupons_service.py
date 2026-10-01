@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
 from coupons.coupons_modal import CouponsMaster
+from bookings.booking_pricing import calculate_coupon_discount, check_coupon_eligibility
 from coupons.coupons_validator import ValidateCouponSchema, CreateCouponSchema, UpdateCouponSchema
 
 
@@ -15,19 +15,8 @@ class CouponsService:
         coupon = self.modal.find_by_code(connection, data.coupon_code)
         if not coupon:
             raise ValueError("Invalid coupon code")
-        expires = coupon["expires_at"]
-        expired = (expires < datetime.utcnow()) if expires.tzinfo is None else (expires < datetime.now(timezone.utc))
-        if expired:
-            raise ValueError("Coupon has expired")
-        if coupon["used_count"] >= coupon["max_uses"]:
-            raise ValueError("Coupon usage limit reached")
-        if data.cart_total < coupon["min_order_amount"]:
-            raise ValueError(f"Minimum order required: ₹{coupon['min_order_amount']//100}")
-        if coupon.get("service_ids") and data.service_id not in coupon["service_ids"]:
-            raise ValueError("Coupon not valid for this service")
-        if self.modal.user_already_used(connection, user_id, coupon["coupon_id"]):
-            raise ValueError("You've already used this coupon")
-
+        # Advisory only — the real check + reservation happens in booking creation.
+        check_coupon_eligibility(connection, user_id, coupon, data.service_id, data.cart_total)
         discount = _calculate_discount(coupon, data.cart_total)
         return "success", {
             "coupon_id": coupon["coupon_id"],
@@ -82,11 +71,4 @@ class CouponsService:
 
 
 def _calculate_discount(coupon: dict, cart_total: int) -> int:
-    if coupon["type"] == "FLAT":
-        return min(coupon["value"], cart_total)
-    elif coupon["type"] in ("PERCENT", "GPAY"):
-        discount = int(cart_total * coupon["value"] / 100)
-        if coupon.get("max_discount"):
-            discount = min(discount, coupon["max_discount"])
-        return discount
-    return 0
+    return calculate_coupon_discount(coupon, cart_total)

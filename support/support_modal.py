@@ -73,12 +73,13 @@ class SupportMaster:
         conn.execute(self.m.insert().values(**msg))
         return msg
 
-    def get_messages(self, conn, ticket_id: str):
-        sql = text("""
+    def get_messages(self, conn, ticket_id: str, include_internal: bool = False):
+        internal_clause = "" if include_internal else "AND (m.is_internal = FALSE OR m.is_internal IS NULL)"
+        sql = text(f"""
             SELECT m.*, u.name AS sender_name, u.role AS sender_role
             FROM ticket_messages m
             JOIN users u ON u.user_id = m.sender_id
-            WHERE m.ticket_id = :tid
+            WHERE m.ticket_id = :tid {internal_clause}
             ORDER BY m.created_at
         """)
         rows = conn.execute(sql, {"tid": ticket_id}).fetchall()

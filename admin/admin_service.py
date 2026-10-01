@@ -35,6 +35,20 @@ class AdminService:
         booking_id = obj.pop("id", None) or obj.pop("booking_id", None)
         data = UpdateBookingSchema(**obj)
         fields = {k: v for k, v in data.model_dump().items() if v is not None}
+        booking = self.modal.get_booking(connection, booking_id)
+        if not booking:
+            raise ValueError("Booking not found")
+        if fields.get("provider_id"):
+            if booking["status"] not in ("PENDING", "ACCEPTED"):
+                raise ValueError(f"Cannot reassign a booking that is {booking['status']}")
+            from providers.providers_modal import ProvidersMaster
+            prov = ProvidersMaster().find_by_id(connection, fields["provider_id"])
+            if not prov or prov.get("status") != "APPROVED":
+                raise ValueError("Provider must exist and be approved")
+            if not fields.get("status") and booking["status"] == "PENDING":
+                fields["status"] = "ACCEPTED"
+        if fields.get("status") == "ACCEPTED" and not (fields.get("provider_id") or booking.get("provider_id")):
+            raise ValueError("Assign a provider_id to accept a booking")
         self.modal.update_booking(connection, booking_id, fields)
         return "success", {"message": "Booking updated"}
 
@@ -45,13 +59,6 @@ class AdminService:
         users = self.modal.list_users(connection, page=page)
         return "success", users
 
-    def list_logs(self, obj, connection):
-        self._require_admin(obj.pop("_role", None))
-        obj.pop("_user_id", None)
-        page = int(obj.get("page", 1))
-        logs = self.modal.list_logs(connection, page=page)
-        return "success", logs
-
     def list_services(self, obj, connection):
         self._require_admin(obj.pop("_role", None))
         obj.pop("_user_id", None)
@@ -59,21 +66,6 @@ class AdminService:
         category_id = obj.get("categoryId") or obj.get("category_id")
         services = ServicesMaster().list_services_admin(connection, category_id)
         return "success", services
-
-    def list_categories(self, obj, connection):
-        self._require_admin(obj.pop("_role", None))
-        obj.pop("_user_id", None)
-        from services_catalog.services_modal import ServicesMaster
-        categories = ServicesMaster().list_categories_admin(connection)
-        return "success", categories
-
-    def create_category(self, obj, connection):
-        self._require_admin(obj.pop("_role", None))
-        obj.pop("_user_id", None)
-        from services_catalog.services_modal import ServicesMaster
-        data = CreateCategorySchema(**obj)
-        result = ServicesMaster().create_category(connection, data.model_dump())
-        return "created", result
 
     def create_service(self, obj, connection):
         self._require_admin(obj.pop("_role", None))

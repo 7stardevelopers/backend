@@ -1,6 +1,3 @@
-import json
-import os
-import boto3
 
 from chat.messages_modal import MessagesMaster
 from chat.messages_validator import SendMessageSchema
@@ -65,27 +62,8 @@ class MessagesService:
         return "success", messages
 
     def _push_via_websocket(self, connection, to_user_id: str, msg: dict):
-        from utilities.db_connection import metadata
-        ws = metadata.tables.get("ws_connections")
-        if not ws:
-            return
-        endpoint = os.environ.get("WEBSOCKET_ENDPOINT_URL", "")
-        if not endpoint:
-            return
+        from utilities.ws_push import push_to_user
         try:
-            rows = connection.execute(ws.select().where(ws.c.user_id == to_user_id)).fetchall()
-            client = boto3.client(
-                "apigatewaymanagementapi",
-                endpoint_url=endpoint,
-                region_name=os.environ.get("AWS_REGION_NAME", "ap-south-1"),
-            )
-            for row in rows:
-                try:
-                    client.post_to_connection(
-                        ConnectionId=row["connection_id"],
-                        Data=json.dumps({"message_type": "chat", **msg}, default=str).encode(),
-                    )
-                except Exception:
-                    pass
+            push_to_user(connection, to_user_id, {"message_type": "chat", **msg})
         except Exception as e:
             print(f"[Chat] WS delivery failed (non-fatal): {e}")

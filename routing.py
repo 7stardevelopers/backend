@@ -41,6 +41,10 @@ _calls  = CallsService()
 _custs  = CustomersService()
 _refs   = ReferralsService()
 
+class RouteNotFound(Exception):
+    pass
+
+
 # (METHOD, path_pattern, handler, param_names)
 # param_names: list of path param names extracted via regex group
 ROUTES = [
@@ -205,17 +209,51 @@ ROUTES = [
 ]
 
 
+# Routes reachable without a JWT. Everything else requires a logged-in user;
+# role/ownership checks still happen inside each service.
+PUBLIC_ROUTES = {
+    ("POST", "/auth/send-otp"),
+    ("POST", "/auth/verify-otp"),
+    ("POST", "/auth/refresh"),
+    ("POST", "/auth/logout"),
+    ("GET",  "/categories"),
+    ("GET",  "/services/search"),
+    ("GET",  "/services"),
+    ("GET",  r"/services/(?P<id>[^/]+)"),
+    ("GET",  "/coupons"),
+    ("GET",  "/subscriptions/plans"),
+    ("GET",  r"/reviews/service/(?P<id>[^/]+)"),
+    ("GET",  r"/reviews/provider/(?P<id>[^/]+)"),
+    ("GET",  "/announcements/mine"),
+    ("POST", "/calls/status-callback"),   # Exotel webhook — verified by shared secret
+}
+
+
 def dispatch_rest(method, path, obj, connection, user_id, role):
     obj["_user_id"] = user_id
     obj["_role"] = role
+    _clamp_pagination(obj)
 
     for route_method, pattern, handler_fn, param_names in ROUTES:
         if route_method != method:
             continue
         m = re.fullmatch(pattern, path)
         if m:
+            if not user_id and (route_method, pattern) not in PUBLIC_ROUTES:
+                raise PermissionError("Invalid token")
             for name in param_names:
                 obj[name] = m.group(name)
             return handler_fn(obj, connection)
 
-    raise ValueError(f"Route not found: {method} {path}")
+    raise RouteNotFound(f"Route not found: {method} {path}")
+
+
+def _clamp_pagination(obj):
+    """Services do int(obj.get("page")) — keep them in a sane range so a negative
+    page can't produce a negative OFFSET (MySQL error → 500)."""
+    for key, lo, hi in (("page", 1, 10_000), ("per_page", 1, 100)):
+        if key in obj:
+            try:
+                obj[key] = min(hi, max(lo, int(obj[key])))
+            except (TypeError, ValueError):
+                raise ValueError(f"{key} must be an integer")

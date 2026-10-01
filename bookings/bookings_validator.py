@@ -11,16 +11,19 @@ class CreateBookingSchema(BaseModel):
     @field_validator("scheduled_at")
     @classmethod
     def must_be_future(cls, v):
-        now = datetime.now(timezone.utc)
+        # Stored as naive UTC — the DB session runs in UTC, so a "+05:30" value
+        # must be converted, not just have its tzinfo dropped by the driver.
         aware = v if v.tzinfo else v.replace(tzinfo=timezone.utc)
-        if aware <= now:
+        if aware <= datetime.now(timezone.utc):
             raise ValueError("scheduled_at must be in the future")
-        return v
+        return aware.astimezone(timezone.utc).replace(tzinfo=None)
     address_snapshot: Optional[dict] = None
     service_snapshot: Optional[dict] = None
-    sub_total: int = Field(..., gt=0)
-    discount: int = 0
-    total_amount: int = Field(..., ge=0)  # can be 0 when coins/coupon fully cover the sub_total
+    # Accepted for backwards compatibility but IGNORED — prices are computed
+    # server-side in bookings/booking_pricing.py.
+    sub_total: Optional[int] = None
+    discount: Optional[int] = None
+    total_amount: Optional[int] = None
     coupon_id: Optional[str] = None
     is_instant: bool = False
     customer_notes: Optional[str] = None
@@ -39,4 +42,4 @@ class VerifyDoorOTPSchema(BaseModel):
 
 
 class AddTipSchema(BaseModel):
-    amount: int = Field(..., gt=0)
+    amount: int = Field(..., gt=0, le=1_000_000)

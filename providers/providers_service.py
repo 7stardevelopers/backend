@@ -14,7 +14,9 @@ class ProvidersService:
         self.notif = NotificationsService()
         self.docs_modal = DocumentsMaster()
 
-    def _get_or_create_provider(self, conn, user_id: str):
+    def _get_or_create_provider(self, conn, user_id: str, role=None):
+        if role != "PROVIDER":
+            raise PermissionError("Provider role required")
         provider = self.modal.find_by_user_id(conn, user_id)
         if not provider:
             provider = self.modal.create(conn, user_id)
@@ -22,15 +24,15 @@ class ProvidersService:
 
     def get_my_profile(self, obj, connection):
         user_id = obj.pop("_user_id")
-        obj.pop("_role", None)
-        provider = self._get_or_create_provider(connection, user_id)
+        role = obj.pop("_role", None)
+        provider = self._get_or_create_provider(connection, user_id, role)
         provider["services"] = self.modal.get_services(connection, provider["provider_id"])
         return "success", provider
 
     def update_profile(self, obj, connection):
         user_id = obj.pop("_user_id")
-        obj.pop("_role", None)
-        provider = self._get_or_create_provider(connection, user_id)
+        role = obj.pop("_role", None)
+        provider = self._get_or_create_provider(connection, user_id, role)
         data = UpdateProviderProfileSchema(**obj)
         fields = {k: v for k, v in data.model_dump().items() if v is not None}
         if fields:
@@ -39,14 +41,19 @@ class ProvidersService:
 
     def set_documents(self, obj, connection):
         user_id = obj.pop("_user_id")
-        obj.pop("_role", None)
-        provider = self._get_or_create_provider(connection, user_id)
+        role = obj.pop("_role", None)
+        provider = self._get_or_create_provider(connection, user_id, role)
         data = SetDocumentsSchema(**obj)
         key_to_type = {
             "aadhaar_front": "AADHAAR_FRONT",
             "aadhaar_back":  "AADHAAR_BACK",
             "pan":           "PAN",
         }
+        from media.media_service import is_own_upload
+        for field, doc_type in key_to_type.items():
+            url = getattr(data, field)
+            if url and not is_own_upload(url, user_id, "documents"):
+                raise ValueError(f"{field} must be a file you uploaded via /media/presign")
         for field, doc_type in key_to_type.items():
             url = getattr(data, field)
             if url:
@@ -55,8 +62,8 @@ class ProvidersService:
 
     def set_services(self, obj, connection):
         user_id = obj.pop("_user_id")
-        obj.pop("_role", None)
-        provider = self._get_or_create_provider(connection, user_id)
+        role = obj.pop("_role", None)
+        provider = self._get_or_create_provider(connection, user_id, role)
         data = SetServicesSchema(**obj)
         self.modal.set_services(connection, provider["provider_id"], data.service_ids)
         return "success", {"message": "Services updated"}
@@ -67,7 +74,7 @@ class ProvidersService:
         if role != "PROVIDER":
             raise PermissionError("Provider role required")
         data = ToggleAvailabilitySchema(**obj)
-        provider = self._get_or_create_provider(connection, user_id)
+        provider = self._get_or_create_provider(connection, user_id, role)
         self.modal.update(connection, provider["provider_id"], {"is_available": data.is_available})
         return "success", {"is_available": data.is_available}
 
@@ -79,7 +86,7 @@ class ProvidersService:
         role = obj.pop("_role", None)
         if role != "PROVIDER":
             raise PermissionError("Provider role required")
-        provider = self._get_or_create_provider(connection, user_id)
+        provider = self._get_or_create_provider(connection, user_id, role)
         self.modal.update(connection, provider["provider_id"], {"is_available": False})
         return "success", {"is_available": False}
 
@@ -89,7 +96,7 @@ class ProvidersService:
         if role != "PROVIDER":
             raise PermissionError("Provider role required")
         data = UpdateLocationSchema(**obj)
-        provider = self._get_or_create_provider(connection, user_id)
+        provider = self._get_or_create_provider(connection, user_id, role)
         self.modal.upsert_location(connection, provider["provider_id"], data.lat, data.lng)
         self.modal.update(connection, provider["provider_id"], {"last_lat": data.lat, "last_lng": data.lng, "last_seen_at": __import__("utilities.common_table_elements", fromlist=["now_utc"]).now_utc()})
         # Broadcast live location to customer for any active booking this provider is on
@@ -122,16 +129,12 @@ class ProvidersService:
             raise PermissionError("Admin or customer role required")
         data = NearbyProvidersSchema(**obj)
         from providers.provider_matching import haversine
-        all_providers = self.modal.list_all(connection, status="APPROVED")
         nearby = []
-        for p in all_providers:
-            lat = p.get("last_lat")
-            lng = p.get("last_lng")
-            if lat and lng:
-                dist = haversine(data.lat, data.lng, float(lat), float(lng))
-                if dist <= data.radius_km:
-                    p["distance_km"] = round(dist, 2)
-                    nearby.append(p)
+        for p in self.modal.list_nearby_candidates(connection, data.service_id):
+            dist = haversine(data.lat, data.lng, float(p["last_lat"]), float(p["last_lng"]))
+            if dist <= data.radius_km:
+                p["distance_km"] = round(dist, 2)
+                nearby.append(p)
         nearby.sort(key=lambda x: x["distance_km"])
         return "success", nearby
 
@@ -215,7 +218,7 @@ class ProvidersService:
         role    = obj.pop("_role", None)
         if role != "PROVIDER":
             raise PermissionError("Provider role required")
-        provider = self._get_or_create_provider(connection, user_id)
+        provider = self._get_or_create_provider(connection, user_id, role)
         return "success", self.modal.get_earnings(connection, provider["provider_id"])
 
     def admin_list_detailed(self, obj, connection):

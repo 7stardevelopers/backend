@@ -23,12 +23,12 @@ class NotificationsService:
         return "success", {"message": "Token registered"}
 
     def unregister_token(self, obj, connection):
-        obj.pop("_user_id", None)
+        user_id = obj.pop("_user_id", None)
         obj.pop("_role", None)
         token_id = obj.get("token_id")
         if not token_id:
             raise ValueError("token_id required")
-        self.modal.unregister_token(connection, token_id)
+        self.modal.unregister_token(connection, user_id, token_id)
         return "success", {"message": "Token removed"}
 
     def list_in_app(self, obj, connection):
@@ -68,7 +68,7 @@ class NotificationsService:
         title = obj.get("title", "")
         body = obj.get("body", "")
         tokens = self.modal.get_all_tokens_for_role(connection, target_role)
-        token_ids = [t["token_id"] for t in tokens if t.get("token_id", "").startswith("ExponentPushToken[")]
+        token_ids = [t["token_id"] for t in tokens if (t.get("token_id") or "").startswith("ExponentPushToken[")]
         self._batch_push(token_ids, title, body, {"type": "announcement"})
         # Record one history row for the admin UI's announcement list — attributed
         # to the sending admin, not fanned out per recipient (which could be
@@ -81,20 +81,20 @@ class NotificationsService:
         return "success", {"message": f"Announcement sent to {len(token_ids)} devices"}
 
     def send_push(self, connection, user_ids: list, title: str, body: str, data: dict = None):
+        # In-app record first — users without a push token still get it.
+        try:
+            from notifications.in_app_notifications.in_app_notifications_service import InAppNotificationsService
+            InAppNotificationsService().record_and_push(
+                connection, user_ids, title, body,
+                (data or {}).get("type", "system"), data or {}
+            )
+        except Exception as e:
+            print(f"[Notify] In-app push failed (non-fatal): {e}")
         try:
             token_rows = self.modal.get_tokens_for_users(connection, user_ids)
-            tokens = [r["token_id"] for r in token_rows if r.get("token_id", "").startswith("ExponentPushToken[")]
-            if not tokens:
-                return
-            try:
-                from notifications.in_app_notifications.in_app_notifications_service import InAppNotificationsService
-                InAppNotificationsService().record_and_push(
-                    connection, user_ids, title, body,
-                    (data or {}).get("type", "system"), data or {}
-                )
-            except Exception as e:
-                print(f"[Notify] In-app push failed (non-fatal): {e}")
-            self._batch_push(tokens, title, body, data or {})
+            tokens = [r["token_id"] for r in token_rows if (r.get("token_id") or "").startswith("ExponentPushToken[")]
+            if tokens:
+                self._batch_push(tokens, title, body, data or {})
         except Exception as e:
             print(f"[Notify] Push failed (non-fatal): {e}")
 

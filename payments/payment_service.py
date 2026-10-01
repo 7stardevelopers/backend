@@ -118,7 +118,16 @@ class PaymentService:
         provider = self.provider_modal.find_by_user_id(connection, user_id)
         if not provider:
             raise ValueError("Provider profile not found")
-        if provider["wallet_balance"] < data.amount:
+        # Lock the provider row so concurrent requests are serialised, then
+        # count money already reserved by open payout requests.
+        available = self.provider_modal.lock_available_balance(connection, provider["provider_id"])
+        if available < data.amount:
+            pending = int(provider["wallet_balance"] or 0) - available
+            if pending > 0:
+                raise ValueError(
+                    f"Insufficient balance: {pending} is already held by pending payout requests "
+                    f"(available to withdraw: {max(0, available)})"
+                )
             raise ValueError("Insufficient wallet balance")
         payout = self.modal.create_payout_request(connection, {
             "provider_id": provider["provider_id"],

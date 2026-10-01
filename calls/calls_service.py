@@ -1,3 +1,4 @@
+import hmac
 import os
 import requests
 
@@ -31,6 +32,8 @@ class CallsService:
                 raise ValueError("Booking not found")
             if not booking["provider_id"]:
                 raise ValueError("No provider assigned to this booking yet")
+            if booking["status"] not in ("ACCEPTED", "EN_ROUTE", "IN_PROGRESS") and role not in ("ADMIN", "SUPPORT"):
+                raise ValueError("Calls are only available while the booking is active")
 
             provider = ProvidersMaster().find_by_id(connection, booking["provider_id"])
             if not provider:
@@ -113,6 +116,13 @@ class CallsService:
         return resp.json().get("Call", {}).get("Sid", "")
 
     def status_callback(self, obj, connection):
+        # Public webhook. Add ?token=<EXOTEL_CALLBACK_SECRET> to EXOTEL_STATUS_CALLBACK_URL.
+        secret = os.environ.get("EXOTEL_CALLBACK_SECRET", "")
+        if secret:
+            if not hmac.compare_digest(str(obj.get("token", "")), secret):
+                raise PermissionError("Invalid callback token")
+        else:
+            print("[Calls] WARNING: EXOTEL_CALLBACK_SECRET not set — status callback is unauthenticated")
         data = CallStatusCallbackSchema(**{k: v for k, v in obj.items() if not k.startswith("_")})
         status = data.DialCallStatus or data.Status or "UNKNOWN"
         self.modal.update_status_by_sid(connection, data.CallSid, status)

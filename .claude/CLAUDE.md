@@ -19,6 +19,11 @@ python run_local.py          # listens on http://localhost:8000
 sam local start-api --env-vars env.json
 ```
 
+**Run unit tests (no DB/Redis/AWS needed — uses in-memory SQLite):**
+```bash
+python -m unittest discover -s tests -t .
+```
+
 **Run integration tests (requires live DB + Redis — reads .env):**
 ```bash
 python full_test.py
@@ -27,7 +32,7 @@ python full_test.py
 **Deploy:**
 ```bash
 sam build && sam deploy --guided          # staging (first time)
-sam build && sam deploy --config-env prod # production
+sam build && sam deploy --config-env production # production
 ```
 
 **Environment setup:**
@@ -46,9 +51,11 @@ API Gateway → lambda_function.handle_rest
   → <module>/<module>_service.py method(obj, connection)
 ```
 
+Every route requires a valid access token except those listed in `PUBLIC_ROUTES` in `routing.py` — add new public endpoints there explicitly. `page`/`per_page` are clamped centrally.
+
 `obj` is the merged body + query params dict, with `_user_id` and `_role` injected. Path params (e.g. `id` from `/bookings/{id}`) are also injected into `obj` by the dispatcher. Services `pop()` `_user_id`/`_role` from `obj` before passing to Pydantic validators.
 
-**Response convention:** service methods return `("success", data)` → HTTP 200, or `("created", data)` → HTTP 201. `PermissionError` → 403 (except messages `"Token expired"`/`"Invalid token"`, which map to 401), `ValueError` → 400, uncaught exceptions → 500.
+**Response convention:** service methods return `("success", data)` → HTTP 200, or `("created", data)` → HTTP 201. `PermissionError` → 403 (except messages `"Token expired"`/`"Invalid token"`, which map to 401), `ValueError` → 400, `routing.RouteNotFound` → 404, uncaught exceptions → 500 (traceback logged).
 
 ### Request flow (WebSocket)
 ```
@@ -69,31 +76,35 @@ Every feature module follows the same three-file pattern:
 ### Auth pattern
 JWT decoded in `request_handler.py` before routing. `user_id` and `role` injected into `obj` as `_user_id` and `_role`. Services check `obj.get("_user_id")` / `obj.pop("_user_id")` directly — no middleware layer.
 
-**Roles:** `CUSTOMER`, `PROVIDER`, `ADMIN`, `SUPPORT`. Access tokens expire in 15 min; refresh tokens in 30 days (stored in `refresh_tokens` table, revoked on logout).
+**Roles:** `CUSTOMER`, `PROVIDER`, `ADMIN`, `SUPPORT`. Access tokens expire in 15 min; refresh tokens in 30 days (stored in `refresh_tokens` table, revoked on logout). Tokens carry `typ: access|refresh`; decode only via `utilities/auth_tokens.py` (`decode_access_token` / `decode_refresh_token`). `JWT_SECRET` is required — the Lambda fails at cold start without it.
 
 ### Redis usage
 - OTP storage: `otp:{phone}` (10-min TTL, SHA-256 hashed)
 - OTP rate limiting: `otp_rate:{phone}` (counter, 1-hr TTL, max 5)
-- Singleton client in `utilities/redis_connection.py`
+- OTP brute-force guard: `otp_attempts:{phone}` (OTP deleted after 5 wrong tries)
+- Singleton client in `utilities/redis_connection.py`. The in-memory fallback is local-dev only; when `ENVIRONMENT` is staging/production an unreachable Redis raises.
 
 ### Secrets
 In Lambda: `env_loader.load_secrets()` fetches JSON from AWS Secrets Manager (`SECRET_NAME` env var) and sets all keys into `os.environ`. Locally: skip `SECRET_NAME` and set vars directly in `.env`.
 
 ### Push notifications
-Uses Expo Push API (`https://exp.host/--/api/v2/push/send`). Tokens must start with `ExponentPushToken[`. Push is always non-fatal (wrapped in try/except). Also writes to `in_app_notifications` table.
+Uses Expo Push API (`https://exp.host/--/api/v2/push/send`). Tokens must start with `ExponentPushToken[`. Push is always non-fatal (wrapped in try/except). Also writes to `in_app_notifications` table (even for users with no push token). WebSocket pushes go through `utilities/ws_push.py`, which deletes stale connections on `GoneException`.
 
 ### Payment flow
 Razorpay: `POST /payments/create-order` → client completes payment → `POST /payments/verify` (HMAC signature check). Platform fee applied on verify: `PLATFORM_FEE_PCT` % (default 10%) deducted from provider earnings.
 
+### Booking pricing
+All amounts are computed server-side in `bookings/booking_pricing.py` from `services.base_price` / `sub_services.price`; client `sub_total`/`discount`/`total_amount` are ignored. Coupon, subscription quota and coins are applied (and reserved atomically) inside booking creation.
+
 ### Booking status machine
 ```
-PENDING → ACCEPTED → EN_ROUTE → IN_PROGRESS → COMPLETED
-PENDING → REJECTED (provider)
-PENDING → CANCELLED (customer/admin)
-ACCEPTED → CANCELLED (customer/admin)
-IN_PROGRESS → CANCELLED (admin only)
+PENDING → ACCEPTED            POST/PATCH /bookings/{id}/accept (approved providers only, atomic claim)
+ACCEPTED → EN_ROUTE           PATCH /status (provider)
+ACCEPTED|EN_ROUTE → IN_PROGRESS   POST /otp-verify only (door OTP cannot be skipped)
+IN_PROGRESS → COMPLETED       POST /complete (provider) or admin
+PENDING|ACCEPTED → CANCELLED  customer (own bookings) / admin; admin also from EN_ROUTE, IN_PROGRESS
 ```
-Transitions are role-gated via `ALLOWED_TRANSITIONS` in `bookings/bookings_service.py` — admins have broader transition rights than customers/providers. Door OTP (4-digit) is generated on booking creation; provider verifies it to move `ACCEPTED → IN_PROGRESS`.
+Transitions are role-gated via `ALLOWED_TRANSITIONS` in `bookings/bookings_service.py` and written with `update_status(..., expected_status=...)` so concurrent requests can't overwrite each other. Door OTP is 4 digits.
 
 ## Key env vars
 | Var | Purpose |
@@ -107,6 +118,8 @@ Transitions are role-gated via `ALLOWED_TRANSITIONS` in `bookings/bookings_servi
 | `S3_MEDIA_BUCKET` | General media (proof photos, etc.) |
 | `WEBSOCKET_ENDPOINT_URL` | API GW Management API URL for WS broadcasting |
 | `PLATFORM_FEE_PCT` | Platform cut from payments (default: 10) |
+| `ENVIRONMENT` | `staging` / `production` (set by template). Enables fail-closed Redis, disables master OTP in production, hides OTPs from logs |
+| `EXOTEL_CALLBACK_SECRET` | Shared secret; append `?token=<secret>` to `EXOTEL_STATUS_CALLBACK_URL` |
 
 ## Live Staging URL
 `https://1ipuylc4mh.execute-api.ap-south-1.amazonaws.com/Prod/`

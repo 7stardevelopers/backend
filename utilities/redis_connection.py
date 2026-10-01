@@ -2,6 +2,8 @@ import os
 import time
 import redis
 
+from utilities.auth_tokens import is_deployed
+
 _client = None
 
 
@@ -32,6 +34,12 @@ class _InMemoryRedis:
         self._store[key] += 1
         return self._store[key]
 
+    def ttl(self, key):
+        if not self._alive(key):
+            return -2
+        exp = self._expiry.get(key)
+        return int(exp - time.time()) if exp else -1
+
     def expire(self, key, ttl):
         if key in self._store:
             self._expiry[key] = time.time() + ttl
@@ -49,7 +57,11 @@ def get_redis():
             client = redis.from_url(url, decode_responses=True, socket_timeout=2)
             client.ping()
             _client = client
-        except Exception:
+        except Exception as e:
+            # OTPs and rate limits must be shared across Lambda containers —
+            # a per-container dict silently breaks login and rate limiting.
+            if is_deployed():
+                raise RuntimeError(f"Redis not reachable: {e}")
             print("[Redis] Not reachable — using in-memory store (dev only)")
             _client = _InMemoryRedis()
     return _client

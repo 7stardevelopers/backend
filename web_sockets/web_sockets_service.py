@@ -1,7 +1,4 @@
 import json
-import os
-import jwt
-import boto3
 
 from web_sockets.web_sockets_modal import WebSocketsMaster
 
@@ -17,6 +14,8 @@ class WebSocketsService:
         user_id, role = _extract_user_from_token(token)
         if not user_id:
             return "error", "Unauthorized"
+        if booking_id and not _is_booking_participant(conn, booking_id, user_id, role):
+            booking_id = None
         self.modal.connect(conn, connection_id, user_id, booking_id, role)
         return "success", "Connected"
 
@@ -55,7 +54,7 @@ class WebSocketsService:
         if provider:
             p_modal.upsert_location(conn, provider["provider_id"], float(lat), float(lng))
             booking_id = body.get("booking_id") or ws_record.get("booking_id")
-            if booking_id:
+            if booking_id and _provider_assigned(conn, booking_id, provider["provider_id"]):
                 _broadcast_location_to_customer(conn, booking_id, lat, lng)
         return "success", "Location updated"
 
@@ -65,7 +64,7 @@ class WebSocketsService:
         if not ws_record:
             return "error", "Connection not found"
         booking_id = body.get("booking_id")
-        if booking_id:
+        if booking_id and _is_booking_participant(conn, booking_id, ws_record["user_id"], ws_record.get("role")):
             from chat.messages_modal import MessagesMaster
             MessagesMaster().mark_seen(conn, booking_id, ws_record["user_id"])
         return "success", "Delivered"
@@ -78,6 +77,8 @@ class WebSocketsService:
         ws_record = self.modal.get_connection(conn, connection_id)
         if not ws_record:
             return "error", "Connection not found"
+        if not _is_booking_participant(conn, booking_id, ws_record["user_id"], ws_record.get("role")):
+            return "error", "Access denied"
         self.modal.set_booking(conn, connection_id, booking_id)
         return "success", "Joined booking"
 
@@ -88,11 +89,11 @@ class WebSocketsService:
 def _extract_user_from_token(token: str):
     if not token:
         return None, None
+    from utilities.auth_tokens import decode_access_token
     try:
-        secret = os.environ.get("JWT_SECRET", "")
-        payload = jwt.decode(token, secret, algorithms=["HS256"])
+        payload = decode_access_token(token)
         return payload.get("user_id"), payload.get("role")
-    except Exception:
+    except PermissionError:
         return None, None
 
 
@@ -104,32 +105,38 @@ def _parse_body(event: dict) -> dict:
         return {}
 
 
+def _is_booking_participant(conn, booking_id, user_id, role=None) -> bool:
+    if role in ("ADMIN", "SUPPORT"):
+        return True
+    from sqlalchemy import text
+    row = conn.execute(text("""
+        SELECT 1 FROM bookings b
+        LEFT JOIN providers p ON p.provider_id = b.provider_id
+        WHERE b.booking_id = :bid AND (b.customer_id = :uid OR p.user_id = :uid)
+    """), {"bid": booking_id, "uid": user_id}).fetchone()
+    return row is not None
+
+
+def _provider_assigned(conn, booking_id, provider_id) -> bool:
+    from utilities.db_connection import get_table
+    b = get_table("bookings")
+    row = conn.execute(
+        b.select().where(b.c.booking_id == booking_id).where(b.c.provider_id == provider_id)
+        .where(b.c.status.in_(["ACCEPTED", "EN_ROUTE", "IN_PROGRESS"]))
+    ).fetchone()
+    return row is not None
+
+
 def _broadcast_location_to_customer(conn, booking_id: str, lat, lng):
     from utilities.db_connection import get_table
+    from utilities.ws_push import push_to_user
     try:
-        ws_t = get_table("ws_connections")
         bookings_t = get_table("bookings")
-    except KeyError:
-        return
-    endpoint = os.environ.get("WEBSOCKET_ENDPOINT_URL", "")
-    if not endpoint:
-        return
-    try:
         booking = conn.execute(bookings_t.select().where(bookings_t.c.booking_id == booking_id)).fetchone()
         if not booking:
             return
-        customer_id = booking.customer_id
-        ws_rows = conn.execute(ws_t.select().where(ws_t.c.user_id == customer_id)).fetchall()
-        client = boto3.client(
-            "apigatewaymanagementapi",
-            endpoint_url=endpoint,
-            region_name=os.environ.get("AWS_REGION_NAME", "ap-south-1"),
-        )
-        payload = json.dumps({"message_type": "location_update", "lat": lat, "lng": lng, "booking_id": booking_id}, default=str).encode()
-        for row in ws_rows:
-            try:
-                client.post_to_connection(ConnectionId=row.connection_id, Data=payload)
-            except Exception:
-                pass
+        push_to_user(conn, booking.customer_id, {
+            "message_type": "location_update", "lat": lat, "lng": lng, "booking_id": booking_id,
+        })
     except Exception as e:
         print(f"[WS] Broadcast location failed (non-fatal): {e}")

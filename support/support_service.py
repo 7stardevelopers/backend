@@ -12,6 +12,8 @@ class SupportService:
         user_id = obj.pop("_user_id")
         role = obj.pop("_role", None)
         data = CreateTicketSchema(**obj)
+        if data.booking_id and role not in ("ADMIN", "SUPPORT"):
+            _require_booking_participant(connection, data.booking_id, user_id)
         ticket_data = {
             "user_id": user_id,
             "subject": data.subject,
@@ -47,7 +49,8 @@ class SupportService:
         ticket = self.modal.get_one(connection, ticket_id)
         if role not in ("ADMIN", "SUPPORT") and str(ticket["user_id"]) != str(user_id):
             raise PermissionError("Access denied")
-        ticket["messages"] = self.modal.get_messages(connection, ticket_id)
+        staff = role in ("ADMIN", "SUPPORT")
+        ticket["messages"] = self.modal.get_messages(connection, ticket_id, include_internal=staff)
         return "success", ticket
 
     def update_status(self, obj, connection):
@@ -72,10 +75,11 @@ class SupportService:
         if role not in ("ADMIN", "SUPPORT") and str(ticket["user_id"]) != str(user_id):
             raise PermissionError("Access denied")
         data = ReplySchema(**{k: v for k, v in obj.items() if k not in ("id",)})
+        is_internal = data.is_internal and role in ("ADMIN", "SUPPORT")
         message = self.modal.add_message(
-            connection, ticket_id, user_id, data.content, data.is_internal
+            connection, ticket_id, user_id, data.content, is_internal
         )
-        if role in ("ADMIN", "SUPPORT") and not data.is_internal:
+        if role in ("ADMIN", "SUPPORT") and not is_internal:
             try:
                 self.notif.send_push(
                     connection=connection,
@@ -87,3 +91,14 @@ class SupportService:
             except Exception:
                 pass
         return "created", message
+
+
+def _require_booking_participant(connection, booking_id, user_id):
+    from sqlalchemy import text
+    row = connection.execute(text("""
+        SELECT 1 FROM bookings b
+        LEFT JOIN providers p ON p.provider_id = b.provider_id
+        WHERE b.booking_id = :bid AND (b.customer_id = :uid OR p.user_id = :uid)
+    """), {"bid": booking_id, "uid": user_id}).fetchone()
+    if not row:
+        raise PermissionError("You can only raise tickets for your own bookings")

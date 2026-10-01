@@ -518,31 +518,61 @@ CREATE TABLE IF NOT EXISTS provider_locations (
     FOREIGN KEY (provider_id) REFERENCES providers(provider_id)
 );
 
--- MIGRATION (2026-08-08): soft-delete support for user_addresses.
--- Needed for CREATE TABLE IF NOT EXISTS above to be a no-op on existing DBs.
-ALTER TABLE user_addresses ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE;
+-- MIGRATIONS for databases created before these columns existed.
+-- MySQL 8 has no ADD COLUMN IF NOT EXISTS / ADD CONSTRAINT IF NOT EXISTS
+-- (that is MariaDB syntax), so these guard procedures check information_schema
+-- first. The whole file is safe to re-run.
+DROP PROCEDURE IF EXISTS _add_column;
+DROP PROCEDURE IF EXISTS _add_constraint;
+DELIMITER //
+CREATE PROCEDURE _add_column(tbl VARCHAR(64), col VARCHAR(64), col_def VARCHAR(255))
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = tbl AND column_name = col
+    ) THEN
+        SET @s = CONCAT('ALTER TABLE ', tbl, ' ADD COLUMN ', col, ' ', col_def);
+        PREPARE stmt FROM @s;
+        EXECUTE stmt;
+        DEALLOCATE PREPARE stmt;
+    END IF;
+END //
+CREATE PROCEDURE _add_constraint(tbl VARCHAR(64), cname VARCHAR(64), cdef VARCHAR(255))
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_schema = DATABASE() AND table_name = tbl AND constraint_name = cname
+    ) THEN
+        SET @s = CONCAT('ALTER TABLE ', tbl, ' ADD CONSTRAINT ', cname, ' ', cdef);
+        PREPARE stmt FROM @s;
+        EXECUTE stmt;
+        DEALLOCATE PREPARE stmt;
+    END IF;
+END //
+DELIMITER ;
 
--- MIGRATION (Phase 2, item 9): booking OTP hardening.
--- NOTE: MySQL supports IF NOT EXISTS on ADD COLUMN, but NOT on ADD CONSTRAINT —
--- the constraint-adding statements below are safe to run once against a fresh
--- DB; on a DB that already has them, check information_schema.table_constraints
--- first (see backend's one-off migration script for the exact guarded form
--- that was actually run against the dev DB).
-ALTER TABLE bookings ADD COLUMN IF NOT EXISTS otp_attempt_count INT DEFAULT 0;
-ALTER TABLE bookings ADD COLUMN IF NOT EXISTS door_otp_generated_at TIMESTAMP NULL;
+-- (2026-08-08) soft-delete support for user_addresses
+CALL _add_column('user_addresses', 'is_deleted', 'BOOLEAN NOT NULL DEFAULT FALSE');
 
--- MIGRATION (Phase 2, item 6): book again, same person.
-ALTER TABLE bookings ADD COLUMN IF NOT EXISTS requested_provider_id CHAR(36) NULL;
-ALTER TABLE bookings ADD CONSTRAINT fk_bookings_requested_provider
-  FOREIGN KEY (requested_provider_id) REFERENCES providers(provider_id);
+-- (Phase 2, item 9) booking OTP hardening
+CALL _add_column('bookings', 'otp_attempt_count', 'INT DEFAULT 0');
+CALL _add_column('bookings', 'door_otp_generated_at', 'TIMESTAMP NULL');
 
--- MIGRATION (Phase 2, item 7): refer & earn + coins (unified wallet).
-ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(12) NULL;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by CHAR(36) NULL;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS coins_balance INT NOT NULL DEFAULT 0;
-ALTER TABLE users ADD CONSTRAINT uq_users_referral_code UNIQUE (referral_code);
-ALTER TABLE users ADD CONSTRAINT fk_users_referred_by
-  FOREIGN KEY (referred_by) REFERENCES users(user_id);
+-- (Phase 2, item 6) book again, same person
+CALL _add_column('bookings', 'requested_provider_id', 'CHAR(36) NULL');
+CALL _add_constraint('bookings', 'fk_bookings_requested_provider',
+  'FOREIGN KEY (requested_provider_id) REFERENCES providers(provider_id)');
+
+-- (Phase 2, item 7) refer & earn + coins (unified wallet)
+CALL _add_column('users', 'referral_code', 'VARCHAR(12) NULL');
+CALL _add_column('users', 'referred_by', 'CHAR(36) NULL');
+CALL _add_column('users', 'coins_balance', 'INT NOT NULL DEFAULT 0');
+CALL _add_constraint('users', 'uq_users_referral_code', 'UNIQUE (referral_code)');
+CALL _add_constraint('users', 'fk_users_referred_by',
+  'FOREIGN KEY (referred_by) REFERENCES users(user_id)');
+
+DROP PROCEDURE IF EXISTS _add_column;
+DROP PROCEDURE IF EXISTS _add_constraint;
 
 CREATE TABLE IF NOT EXISTS wallet_ledger (
     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -585,6 +615,12 @@ CALL _add_index('token_connections',     'idx_token_connections_user',     'user
 CALL _add_index('chat_messages',         'idx_chat_messages_booking',      'booking_id, created_at DESC');
 CALL _add_index('ws_connections',        'idx_ws_connections_user',        'user_id');
 CALL _add_index('activity_log',          'idx_activity_log_user',          'user_id, created_at DESC');
+CALL _add_index('bookings',              'idx_bookings_provider_status',   'provider_id, status');
+CALL _add_index('bookings',              'idx_bookings_customer_created',  'customer_id, created_at');
+CALL _add_index('payments',              'idx_payments_status',            'status');
+CALL _add_index('payout_requests',       'idx_payout_requests_prov_status', 'provider_id, status');
+CALL _add_index('support_tickets',       'idx_support_tickets_status',     'status');
+CALL _add_index('call_logs',             'idx_call_logs_sid',              'exotel_call_sid');
 
 DROP PROCEDURE IF EXISTS _add_index;
 
@@ -617,16 +653,3 @@ INSERT IGNORE INTO subscription_plans (name, price, bookings_included, discount_
   ('Basic Pass', 29900, 3, 10, 1, '{"highlights": ["3 bookings/month", "10% off each booking", "Priority support"]}'),
   ('Star Pass', 59900, 8, 20, 2, '{"highlights": ["8 bookings/month", "20% off each booking", "Free re-service if not satisfied"]}'),
   ('Pro Pass', 99900, NULL, 30, 3, '{"highlights": ["Unlimited bookings", "30% off each booking", "Priority matching", "Dedicated account manager"]}');
-
--- PRICE UPDATE (2026-08-08): lower service base_price for existing DBs.
--- INSERT IGNORE above only seeds fresh databases; run this block against an
--- already-populated DB (e.g. staging) to bring existing rows down to the new prices.
-UPDATE services SET base_price = 49900 WHERE service_id = 's1';
-UPDATE services SET base_price = 29900 WHERE service_id = 's2';
-UPDATE services SET base_price = 19900 WHERE service_id = 's3';
-UPDATE services SET base_price = 19900 WHERE service_id = 's4';
-UPDATE services SET base_price = 39900 WHERE service_id = 's5';
-UPDATE services SET base_price = 24900 WHERE service_id = 's6';
-UPDATE services SET base_price = 19900 WHERE service_id = 's7';
-UPDATE services SET base_price = 79900 WHERE service_id = 's8';
-UPDATE services SET base_price = 39900 WHERE service_id = 's9';

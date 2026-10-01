@@ -1,5 +1,8 @@
 import math
+from sqlalchemy import text
 from providers.providers_modal import ProvidersMaster
+
+MAX_MATCH_DISTANCE_KM = 20
 
 
 def haversine(lat1, lng1, lat2, lng2) -> float:
@@ -41,18 +44,36 @@ def match_provider(connection, booking: dict):
         return None
 
     address_snapshot = booking.get("address_snapshot") or {}
-    booking_lat = address_snapshot.get("lat") or 17.3850
-    booking_lng = address_snapshot.get("lng") or 78.4867
+    booking_lat = address_snapshot.get("lat")
+    booking_lng = address_snapshot.get("lng")
+    if booking_lat is None or booking_lng is None:
+        return None  # can't match by distance without a location — leave for broadcast
+    booking_lat, booking_lng = float(booking_lat), float(booking_lng)
 
     modal = ProvidersMaster()
-    candidates = modal.get_available_for_service(connection, service_id)
+    busy = _busy_provider_ids(connection)
+    candidates = []
+    for p in modal.get_available_for_service(connection, service_id):
+        if p["provider_id"] in busy or p.get("last_lat") is None or p.get("last_lng") is None:
+            continue
+        if haversine(booking_lat, booking_lng, float(p["last_lat"]), float(p["last_lng"])) > MAX_MATCH_DISTANCE_KM:
+            continue
+        candidates.append(p)
 
     if not candidates:
         return None
 
     scored = [
-        {"provider": p, "score": score_provider(p, float(booking_lat), float(booking_lng))}
+        {"provider": p, "score": score_provider(p, booking_lat, booking_lng)}
         for p in candidates
     ]
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored[0]["provider"]
+
+
+def _busy_provider_ids(connection) -> set:
+    rows = connection.execute(text("""
+        SELECT DISTINCT provider_id FROM bookings
+        WHERE provider_id IS NOT NULL AND status IN ('EN_ROUTE', 'IN_PROGRESS')
+    """)).fetchall()
+    return {r.provider_id for r in rows}

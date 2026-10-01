@@ -1,8 +1,7 @@
 import json
 import math
-import random
-import string
-from sqlalchemy import text, bindparam
+import secrets
+from sqlalchemy import text, bindparam, or_
 from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
@@ -27,7 +26,7 @@ class BookingsMaster:
 
     def create(self, conn, obj: dict) -> dict:
         obj["booking_id"] = new_uuid()
-        obj["door_otp"] = "".join(random.choices(string.digits, k=4))
+        obj["door_otp"] = f"{secrets.randbelow(10**4):04d}"
         obj["door_otp_generated_at"] = now_utc()
         obj["created_at"] = now_utc()
         obj["updated_at"] = now_utc()
@@ -50,31 +49,31 @@ class BookingsMaster:
             raise ValueError(f"Booking {booking_id} not found")
         return dict(row._mapping)
 
-    def update_status(self, conn, booking_id: str, status: str) -> dict:
-        conn.execute(
-            self.t.update()
-            .where(self.t.c.booking_id == booking_id)
-            .values(status=status, updated_at=now_utc())
-        )
+    def update_status(self, conn, booking_id: str, status: str, expected_status=None) -> dict:
+        """Set status. With expected_status (str or tuple), only updates while the
+        booking is still in that status, so concurrent requests can't overwrite
+        each other (e.g. cancel racing accept, double-complete)."""
+        upd = self.t.update().where(self.t.c.booking_id == booking_id)
+        if expected_status is not None:
+            allowed = (expected_status,) if isinstance(expected_status, str) else tuple(expected_status)
+            upd = upd.where(self.t.c.status.in_(allowed))
+        result = conn.execute(upd.values(status=status, updated_at=now_utc()))
+        if expected_status is not None and result.rowcount == 0:
+            raise ValueError("Booking status changed — please refresh and try again")
         return self.read_one(conn, booking_id)
 
-    def assign_provider(self, conn, booking_id: str, provider_id: str):
-        conn.execute(
-            self.t.update()
-            .where(self.t.c.booking_id == booking_id)
-            .values(provider_id=provider_id, status="ACCEPTED", updated_at=now_utc())
-        )
-
     def verify_door_otp(self, conn, booking_id: str, otp: str) -> bool:
-        booking = self.read_one(conn, booking_id)
-        if booking.get("door_otp") != otp:
-            return False
-        conn.execute(
+        """Atomically mark the OTP verified and start the job. Only succeeds once,
+        from ACCEPTED/EN_ROUTE, with the right OTP."""
+        result = conn.execute(
             self.t.update()
             .where(self.t.c.booking_id == booking_id)
-            .values(door_otp_verified=True, updated_at=now_utc())
+            .where(self.t.c.door_otp == otp)
+            .where(self.t.c.status.in_(("ACCEPTED", "EN_ROUTE")))
+            .where(or_(self.t.c.door_otp_verified == False, self.t.c.door_otp_verified == None))
+            .values(door_otp_verified=True, status="IN_PROGRESS", updated_at=now_utc())
         )
-        return True
+        return result.rowcount > 0
 
     def record_failed_otp_attempt(self, conn, booking_id: str) -> int:
         conn.execute(
@@ -87,8 +86,15 @@ class BookingsMaster:
         ).fetchone()
         return row._mapping["otp_attempt_count"] if row else 0
 
+    def record_failed_otp_attempt_committed(self, booking_id: str) -> int:
+        """Increment the counter in its own transaction so it survives the
+        rollback of the request that raised 'Invalid door OTP'."""
+        from utilities.db_connection import get_engine
+        with get_engine().begin() as own:
+            return self.record_failed_otp_attempt(own, booking_id)
+
     def regenerate_door_otp(self, conn, booking_id: str) -> str:
-        new_otp = "".join(random.choices(string.digits, k=4))
+        new_otp = f"{secrets.randbelow(10**4):04d}"
         conn.execute(
             self.t.update()
             .where(self.t.c.booking_id == booking_id)
@@ -103,24 +109,15 @@ class BookingsMaster:
         return new_otp
 
     def create_items(self, conn, booking_id: str, items: list):
-        sub_svcs_t = get_table("sub_services")
+        """items come from booking_pricing.price_booking — already validated
+        against sub_services with server-side prices."""
         for item in items:
-            ss_id = item.get("sub_service_id")
-            if not ss_id:
-                continue
-            row = conn.execute(
-                sub_svcs_t.select().where(sub_svcs_t.c.sub_service_id == ss_id)
-            ).fetchone()
-            if not row:
-                # Client sent a service_id or stale/invalid UUID — skip gracefully
-                print(f"[BookingItems] Skipping unknown sub_service_id '{ss_id}' for booking {booking_id}")
-                continue
             conn.execute(self.items.insert().values(
                 booking_id=booking_id,
-                sub_service_id=ss_id,
-                name_snapshot=item.get("name"),
-                price_snapshot=item.get("price"),
-                quantity=item.get("quantity", 1),
+                sub_service_id=item["sub_service_id"],
+                name_snapshot=item["name"],
+                price_snapshot=item["price"],
+                quantity=item["quantity"],
             ))
 
     def get_items(self, conn, booking_id: str) -> list:

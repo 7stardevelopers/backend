@@ -53,9 +53,14 @@ class AdminMaster:
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
-    def update_booking(self, conn, booking_id: str, fields: dict):
+    def get_booking(self, conn, booking_id: str):
+        row = conn.execute(self.bookings.select().where(self.bookings.c.booking_id == booking_id)).fetchone()
+        return dict(row._mapping) if row else None
+
+    def update_booking(self, conn, booking_id: str, fields: dict) -> bool:
         fields["updated_at"] = now_utc()
-        conn.execute(self.bookings.update().where(self.bookings.c.booking_id == booking_id).values(**fields))
+        result = conn.execute(self.bookings.update().where(self.bookings.c.booking_id == booking_id).values(**fields))
+        return result.rowcount > 0
 
     def list_users(self, conn, page=1):
         sel = self.users.select().where(self.users.c.role == "CUSTOMER").order_by(

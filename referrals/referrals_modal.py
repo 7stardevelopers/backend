@@ -28,11 +28,22 @@ class ReferralsMaster:
         ).fetchone()
         return int(row[0] or 0)
 
-    def set_referred_by(self, conn, user_id: str, referrer_user_id: str):
-        conn.execute(
-            self.u.update().where(self.u.c.user_id == user_id)
+    def set_referred_by(self, conn, user_id: str, referrer_user_id: str) -> bool:
+        """Only sets it once — returns False if the user was already referred
+        (closes the double-redeem race)."""
+        result = conn.execute(
+            self.u.update()
+            .where(self.u.c.user_id == user_id)
+            .where(self.u.c.referred_by == None)
             .values(referred_by=referrer_user_id, updated_at=now_utc())
         )
+        return result.rowcount > 0
+
+    def has_completed_booking(self, conn, user_id: str) -> bool:
+        row = conn.execute(text(
+            "SELECT 1 FROM bookings WHERE customer_id = :uid AND status = 'COMPLETED' LIMIT 1"
+        ), {"uid": user_id}).fetchone()
+        return row is not None
 
     def credit(self, conn, user_id: str, amount: int, reason: str, booking_id: str = None):
         conn.execute(self.wl.insert().values(

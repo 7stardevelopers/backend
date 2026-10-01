@@ -3,6 +3,14 @@ from finance.finance_validator import ApprovePayoutSchema, ReportSchema
 from utilities.common_table_elements import now_utc
 
 
+# target status -> statuses it may be reached from
+PAYOUT_TRANSITIONS = {
+    "APPROVED":  ("PENDING",),
+    "REJECTED":  ("PENDING", "APPROVED"),
+    "PROCESSED": ("PENDING", "APPROVED"),
+}
+
+
 class FinanceService:
     def __init__(self):
         self.modal = FinanceMaster()
@@ -30,17 +38,23 @@ class FinanceService:
         obj.pop("_user_id", None)
         payout_id = obj.pop("id", None) or obj.pop("payout_id", None)
         data = ApprovePayoutSchema(**obj)
+        payout = self.modal.get_payout(connection, payout_id)
+        if not payout:
+            raise ValueError("Payout not found")
+        allowed_from = PAYOUT_TRANSITIONS.get(data.status, ())
+        if payout["status"] not in allowed_from:
+            raise ValueError(f"Cannot move payout from {payout['status']} to {data.status}")
+
         fields = {"status": data.status}
         if data.notes:
             fields["notes"] = data.notes
-        self.modal.update_payout(connection, payout_id, fields)
+        # Conditional on the status we just checked, so two admins can't both
+        # process (and double-debit) the same payout.
+        if not self.modal.update_payout(connection, payout_id, fields, expected_status=payout["status"]):
+            raise ValueError("Payout was updated by someone else — refresh and try again")
         if data.status == "PROCESSED":
-            from utilities.db_connection import metadata
-            payout_t = metadata.tables["payout_requests"]
-            payout = connection.execute(payout_t.select().where(payout_t.c.payout_id == payout_id)).fetchone()
-            if payout:
-                from providers.providers_modal import ProvidersMaster
-                ProvidersMaster().update_wallet(connection, payout["provider_id"], payout["amount"], "debit")
+            from providers.providers_modal import ProvidersMaster
+            ProvidersMaster().update_wallet(connection, payout["provider_id"], payout["amount"], "debit")
         return "success", {"message": f"Payout {data.status.lower()}"}
 
     def export_report(self, obj, connection):
