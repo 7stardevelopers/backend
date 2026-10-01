@@ -192,6 +192,12 @@ class ExotelFormCallbackParsingTests(unittest.TestCase):
         body = parse_request(event)["body"]
         self.assertEqual((body["CallSid"], body["Status"], body["token"]), ("CA1", "busy", "cb-secret"))
 
+    def test_exophone_normalisation(self):
+        self.assertEqual(exotel_client.normalize_exophone("7940000000"), "07940000000")
+        self.assertEqual(exotel_client.normalize_exophone("+91 79400 00000"), "07940000000")
+        self.assertEqual(exotel_client.normalize_exophone("07940000000"), "07940000000")
+        self.assertEqual(exotel_client.normalize_exophone("18004190000"), "18004190000")  # toll-free untouched
+
     def test_number_normalisation(self):
         self.assertEqual(exotel_client.normalize_number("+91 98765-43210"), "09876543210")
         self.assertEqual(exotel_client.normalize_number("09876543210"), "09876543210")

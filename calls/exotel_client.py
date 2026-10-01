@@ -41,6 +41,18 @@ def normalize_number(phone) -> str:
     return "0" + digits
 
 
+def normalize_exophone(value) -> str:
+    """ExoPhones are listed in the dashboard as 0 + STD code + number
+    (e.g. 079XXXXXXXX). A value saved without the leading 0 (79XXXXXXXX) or
+    with +91 is rejected with "Could not find the CallerId". Toll-free /
+    other formats that aren't 10-digit numbers are sent unchanged."""
+    raw = str(value or "").strip()
+    try:
+        return normalize_number(raw)
+    except ValueError:
+        return raw
+
+
 def connect_call(from_number: str, to_number: str) -> str:
     """Start a bridged call. Returns Exotel's CallSid. Raises ExotelError."""
     missing = [k for k in REQUIRED_ENV if not os.environ.get(k)]
@@ -54,7 +66,7 @@ def connect_call(from_number: str, to_number: str) -> str:
     payload = {
         "From": normalize_number(from_number),
         "To": normalize_number(to_number),
-        "CallerId": os.environ["EXOPHONE"].strip(),
+        "CallerId": normalize_exophone(os.environ["EXOPHONE"]),
         "TimeLimit": str(_int_env("EXOTEL_TIME_LIMIT_SEC", DEFAULT_TIME_LIMIT_SEC)),
         "Record": "true" if os.environ.get("EXOTEL_RECORD", "false").lower() == "true" else "false",
     }
