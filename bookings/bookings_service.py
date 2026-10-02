@@ -12,7 +12,7 @@ from bookings.booking_pricing import price_booking, apply_booking_side_effects, 
 from notifications.notifications_service import NotificationsService
 from payments.payment_modal import PaymentMaster
 from providers.provider_matching import match_provider
-from providers.providers_modal import ProvidersMaster
+from providers.providers_modal import ProvidersMaster, is_registered_worker, WORKER_CANNOT_BOOK
 from utilities.common_table_elements import new_uuid, now_utc
 from utilities.db_connection import get_table
 
@@ -58,6 +58,8 @@ class BookingsService:
     def create(self, obj, connection):
         user_id = obj.pop("_user_id")
         role = obj.pop("_role", None)
+        if role == "PROVIDER" or is_registered_worker(connection, user_id):
+            raise PermissionError(WORKER_CANNOT_BOOK)
         if role not in ("CUSTOMER",):
             raise PermissionError("Only customers can create bookings")
 
@@ -301,6 +303,9 @@ class BookingsService:
             raise ValueError("Provider profile not found")
         if provider.get("status") != "APPROVED":
             raise PermissionError("Your provider account is not approved yet")
+        target = self.modal.read_one(connection, booking_id)
+        if target and str(target.get("customer_id")) == str(user_id):
+            raise PermissionError("You can't accept your own booking")
         claimed = self.modal.claim_booking(connection, booking_id, provider["provider_id"])
         if not claimed:
             raise ValueError("Booking is no longer available — another provider may have accepted it")

@@ -8,7 +8,7 @@ from payments.payment_validator import (
     CreateOrderSchema, VerifyPaymentSchema, PayoutRequestSchema, RefundSchema
 )
 from bookings.bookings_modal import BookingsMaster
-from providers.providers_modal import ProvidersMaster
+from providers.providers_modal import ProvidersMaster, is_registered_worker, WORKER_CANNOT_BOOK
 from notifications.notifications_service import NotificationsService
 from utilities.common_table_elements import now_utc
 
@@ -31,6 +31,8 @@ class PaymentService:
     def create_order(self, obj, connection):
         user_id = obj.pop("_user_id")
         role = obj.pop("_role", None)
+        if role == "PROVIDER" or is_registered_worker(connection, user_id):
+            raise PermissionError(WORKER_CANNOT_BOOK)
         if role != "CUSTOMER":
             raise PermissionError("Only customers can create payment orders")
 

@@ -3,6 +3,23 @@ from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
 
 
+WORKER_CANNOT_BOOK = (
+    "This number is registered as a service partner and can't book services. "
+    "Please use a different number."
+)
+
+
+def is_registered_worker(conn, user_id) -> bool:
+    """True once the number has signed up in the worker app — checked against the DB,
+    not the JWT, because a customer token issued before registering stays valid for 15 min."""
+    row = conn.execute(text("""
+        SELECT u.role, p.provider_id
+        FROM users u LEFT JOIN providers p ON p.user_id = u.user_id
+        WHERE u.user_id = :uid
+    """), {"uid": user_id}).fetchone()
+    return bool(row) and (row.role == "PROVIDER" or row.provider_id is not None)
+
+
 class ProvidersMaster:
     @property
     def p(self):

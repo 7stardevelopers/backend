@@ -157,6 +157,8 @@ class BookingsMaster:
             WHERE b.status = 'PENDING'
               AND b.provider_id IS NULL
               AND ps.provider_id = :pid
+              -- never offer a worker their own bookings (made before they registered)
+              AND b.customer_id <> (SELECT user_id FROM providers WHERE provider_id = :pid)
             ORDER BY b.scheduled_at ASC
             LIMIT 50
         """), {"pid": provider_id})

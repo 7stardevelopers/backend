@@ -5,7 +5,7 @@ from instant_bookings.instant_bookings_modal import InstantBookingsMaster
 from instant_bookings.instant_bookings_validator import CreateInstantBookingSchema
 from bookings.bookings_modal import BookingsMaster
 from notifications.notifications_service import NotificationsService
-from providers.providers_modal import ProvidersMaster
+from providers.providers_modal import ProvidersMaster, is_registered_worker, WORKER_CANNOT_BOOK
 from utilities.common_table_elements import now_utc
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -28,6 +28,8 @@ class InstantBookingsService:
     def create_instant(self, obj, connection):
         user_id = obj.pop("_user_id")
         role = obj.pop("_role", None)
+        if role == "PROVIDER" or is_registered_worker(connection, user_id):
+            raise PermissionError(WORKER_CANNOT_BOOK)
         if role != "CUSTOMER":
             raise PermissionError("Only customers can create instant bookings")
 
