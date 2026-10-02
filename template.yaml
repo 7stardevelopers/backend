@@ -19,8 +19,8 @@ Globals:
         SECRET_NAME: !Ref SecretName
         AWS_REGION_NAME: ap-south-1
         ENVIRONMENT: !Ref Environment
-        S3_DOCUMENTS_BUCKET: !Sub "7starexperts-documents-${Environment}"
-        S3_MEDIA_BUCKET: !Sub "7starexperts-media-${Environment}"
+        S3_DOCUMENTS_BUCKET: !Sub "7sx-documents-${Environment}"
+        S3_MEDIA_BUCKET: !Sub "7sx-media-${Environment}"
         CLOUDFRONT_URL: !Ref CloudFrontURL
 
 Parameters:
@@ -79,9 +79,9 @@ Resources:
         - AWSSecretsManagerGetSecretValuePolicy:
             SecretArn: !Sub "arn:aws:secretsmanager:ap-south-1:${AWS::AccountId}:secret:${SecretName}*"
         - S3CrudPolicy:
-            BucketName: !Sub "7starexperts-documents-${Environment}"
+            BucketName: !Sub "7sx-documents-${Environment}"
         - S3CrudPolicy:
-            BucketName: !Sub "7starexperts-media-${Environment}"
+            BucketName: !Sub "7sx-media-${Environment}"
         - Statement:
           - Effect: Allow
             Action:

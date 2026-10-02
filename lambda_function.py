@@ -1,8 +1,10 @@
 import json
+import time
 import traceback
 from utilities.env_loader import load_secrets
 from utilities.db_connection import get_connection, get_engine
 from utilities.auth_tokens import get_jwt_secret
+from utilities.api_logger import log_api
 
 # Must run before routing imports: routing.py instantiates all services at module
 # level, whose __init__ methods access metadata.tables[...] which requires reflect().
@@ -26,10 +28,15 @@ def handle_rest(event, context):
     path = event.get("path", "?")
     if method == "OPTIONS":
         return response(200, {"status": "success", "data": None})
+    started = time.perf_counter()
+    req = {}
+    req_body = None
+    error = trace = None
     try:
         req = parse_request(event)
         method, path = req["method"], req["path"]
-        print(f"[REQUEST] {method} {path}")
+        # Snapshot before dispatch — services pop keys out of obj.
+        req_body = dict(req["body"]) if isinstance(req["body"], dict) else req["body"]
         with get_connection() as conn:
             status, data = dispatch_rest(
                 method=req["method"],
@@ -40,22 +47,40 @@ def handle_rest(event, context):
                 role=req["role"],
             )
         code = {"success": 200, "created": 201}.get(status, 400)
-        return response(code, {"status": status, "data": data})
+        body = {"status": status, "data": data}
+        if code >= 400:
+            error = str(data)
     except RouteNotFound as e:
-        return response(404, {"status": "error", "message": str(e)})
+        error = str(e)
+        code = 404
+        body = {"status": "error", "message": error}
     except PermissionError as e:
-        msg = str(e)
-        print(f"[FORBIDDEN] {method} {path}: {msg}")
+        error = str(e)
         # Token errors are authentication failures (401), not authorisation (403)
-        code = 401 if msg in ("Token expired", "Invalid token") else 403
-        return response(code, {"status": "error", "message": msg})
+        code = 401 if error in ("Token expired", "Invalid token") else 403
+        body = {"status": "error", "message": error}
     except ValueError as e:
-        print(f"[BAD_REQUEST] {method} {path}: {e}")
-        return response(400, {"status": "error", "message": str(e)})
+        error = str(e)
+        code = 400
+        body = {"status": "error", "message": error}
     except Exception as e:
-        print(f"[ERROR] Unhandled {method} {path}: {e}")
-        traceback.print_exc()
-        return response(500, {"status": "error", "message": "Internal server error"})
+        error = f"Unhandled: {e}"
+        trace = traceback.format_exc()
+        code = 500
+        body = {"status": "error", "message": "Internal server error"}
+
+    log_api(
+        method, path, code,
+        duration_ms=round((time.perf_counter() - started) * 1000),
+        user_id=req.get("user_id"),
+        role=req.get("role"),
+        request_id=getattr(context, "aws_request_id", None),
+        req_body=req_body,
+        resp_body=body,
+        error=error,
+        trace=trace,
+    )
+    return response(code, body)
 
 
 def handle_websocket(event, context):
@@ -65,7 +90,7 @@ def handle_websocket(event, context):
         with get_connection() as conn:
             status, data = dispatch_wss(route, conn_id, event, conn)
     except Exception as e:
-        print(f"[WSS ERROR] {e}")
+        print(f"[WSS ERROR] route={route} connection={conn_id}: {e}")
         traceback.print_exc()
         status, data = "error", "Internal error"
     # For $connect the status code decides whether API Gateway accepts the socket

@@ -44,7 +44,7 @@ class DocumentsService:
             raise ValueError(f"File exceeds {MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB limit")
 
         ext = ALLOWED_CONTENT_TYPES[content_type]
-        bucket = os.environ.get("S3_DOCUMENTS_BUCKET", "7starexperts-documents-staging")
+        bucket = os.environ.get("S3_DOCUMENTS_BUCKET", "7sx-documents-staging")
         bucket_region = os.environ.get("AWS_REGION_NAME", "ap-south-1")
         key = f"providers/{provider['provider_id']}/{doc_type}{ext}"
         file_url = f"https://{bucket}.s3.{bucket_region}.amazonaws.com/{key}"
@@ -89,7 +89,7 @@ class DocumentsService:
         doc = self.modal.get_one(connection, document_id)
         if not doc:
             raise ValueError("Document not found")
-        bucket = os.environ.get("S3_DOCUMENTS_BUCKET", "7starexperts-documents-staging")
+        bucket = os.environ.get("S3_DOCUMENTS_BUCKET", "7sx-documents-staging")
         bucket_region = os.environ.get("AWS_REGION_NAME", "ap-south-1")
         prefix = f"https://{bucket}.s3.{bucket_region}.amazonaws.com/"
         key = doc["file_url"].replace(prefix, "")
