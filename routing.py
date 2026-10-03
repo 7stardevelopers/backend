@@ -77,6 +77,7 @@ ROUTES = [
     ("GET",  "/bookings/past-providers",         _books.list_past_providers,         []),
     ("PATCH",r"/bookings/(?P<id>[^/]+)/accept",  _books.accept_booking,             ["id"]),
     ("GET",  r"/bookings/(?P<id>[^/]+)$",        _books.get_detail,                 ["id"]),
+    ("GET",  r"/bookings/(?P<id>[^/]+)/eta",     _books.get_eta,                    ["id"]),
     ("PATCH",r"/bookings/(?P<id>[^/]+)/status", _books.update_status,    ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/cancel",  _books.cancel,          ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/otp-verify", _books.verify_door_otp, ["id"]),

@@ -255,6 +255,47 @@ class BookingsService:
         self._hide_door_otp(booking, role)
         return "success", booking
 
+    def get_eta(self, obj, connection):
+        """Road distance/ETA from the assigned provider to the booking address —
+        one shared number for the customer and the worker apps."""
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        booking_id = obj.get("id") or obj.get("booking_id")
+        booking = self.modal.read_one(connection, booking_id)
+        if not booking or not booking.get("provider_id"):
+            raise ValueError("No expert assigned yet")
+        if role not in ("ADMIN", "SUPPORT"):
+            is_customer = str(booking.get("customer_id")) == str(user_id)
+            prov = ProvidersMaster().find_by_user_id(connection, user_id) if not is_customer else None
+            is_provider = bool(prov) and str(prov["provider_id"]) == str(booking["provider_id"])
+            if not is_customer and not is_provider:
+                raise PermissionError("Access denied")
+
+        addr = booking.get("address_snapshot") or {}
+        if isinstance(addr, str):
+            import json
+            try:
+                addr = json.loads(addr)
+            except ValueError:
+                addr = {}
+        loc = ProvidersMaster().get_location(connection, booking["provider_id"])
+        if not loc or loc.get("lat") is None or addr.get("lat") is None or addr.get("lng") is None:
+            return "success", None
+
+        from bookings.booking_eta import road_eta
+        from utilities.redis_connection import get_redis
+        try:
+            redis_client = get_redis()
+        except Exception:
+            redis_client = None
+        eta = road_eta(
+            booking_id,
+            (float(loc["lat"]), float(loc["lng"])),
+            (float(addr["lat"]), float(addr["lng"])),
+            redis_client,
+        )
+        return "success", eta
+
     def list_past_providers(self, obj, connection):
         user_id = obj.pop("_user_id")
         obj.pop("_role", None)
