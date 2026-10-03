@@ -55,7 +55,7 @@ class WebSocketsService:
             p_modal.upsert_location(conn, provider["provider_id"], float(lat), float(lng))
             booking_id = body.get("booking_id") or ws_record.get("booking_id")
             if booking_id and _provider_assigned(conn, booking_id, provider["provider_id"]):
-                _broadcast_location_to_customer(conn, booking_id, lat, lng)
+                _broadcast_location_to_customer(conn, booking_id, float(lat), float(lng))
         return "success", "Location updated"
 
     def on_mark_delivered(self, connection_id: str, event: dict, conn):
@@ -127,9 +127,10 @@ def _provider_assigned(conn, booking_id, provider_id) -> bool:
     return row is not None
 
 
-def _broadcast_location_to_customer(conn, booking_id: str, lat, lng):
+def _broadcast_location_to_customer(conn, booking_id: str, lat, lng, updated_at=None):
     from utilities.db_connection import get_table
     from utilities.ws_push import push_to_user
+    from utilities.common_table_elements import now_utc
     try:
         bookings_t = get_table("bookings")
         booking = conn.execute(bookings_t.select().where(bookings_t.c.booking_id == booking_id)).fetchone()
@@ -137,6 +138,7 @@ def _broadcast_location_to_customer(conn, booking_id: str, lat, lng):
             return
         push_to_user(conn, booking.customer_id, {
             "message_type": "location_update", "lat": lat, "lng": lng, "booking_id": booking_id,
+            "updated_at": (updated_at or now_utc()).isoformat(),
         })
     except Exception as e:
         print(f"[WS] Broadcast location failed (non-fatal): {e}")

@@ -5,12 +5,16 @@ import boto3
 from utilities.db_connection import get_table
 
 _client = None
+_warned_no_endpoint = False
 
 
 def _get_client():
-    global _client
+    global _client, _warned_no_endpoint
     endpoint = os.environ.get("WEBSOCKET_ENDPOINT_URL", "")
     if not endpoint:
+        if not _warned_no_endpoint:
+            print("[WS] WEBSOCKET_ENDPOINT_URL is not set — WebSocket pushes (live location, chat) are disabled")
+            _warned_no_endpoint = True
         return None
     if _client is None:
         _client = boto3.client(

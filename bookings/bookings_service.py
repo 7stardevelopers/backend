@@ -228,6 +228,7 @@ class BookingsService:
                 if loc:
                     booking["provider_lat"] = float(loc["lat"]) if loc.get("lat") else None
                     booking["provider_lng"] = float(loc["lng"]) if loc.get("lng") else None
+                    booking["provider_location_updated_at"] = loc.get("updated_at")
             except Exception:
                 pass
         if booking.get("customer_id"):
