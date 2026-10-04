@@ -58,5 +58,36 @@ class RoadEtaTests(unittest.TestCase):
         self.assertEqual(eta["source"], "estimate")
 
 
+def _directions_response(status="OK"):
+    r = mock.Mock()
+    r.json.return_value = {
+        "status": status,
+        "routes": [{
+            "overview_polyline": {"points": "_p~iF~ps|U_ulLnnqC"},
+            "legs": [{"distance": {"value": 4100}, "duration": {"value": 540}, "duration_in_traffic": {"value": 660}}],
+        }],
+    }
+    return r
+
+
+class RoadRouteTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "k"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_google_polyline_and_traffic_duration(self):
+        with mock.patch.object(booking_eta.http, "get", return_value=_directions_response()):
+            route = booking_eta.road_route("b1", ORIGIN, DEST)
+        self.assertEqual(route, {"polyline": "_p~iF~ps|U_ulLnnqC", "distance_km": 4.1,
+                                 "duration_min": 11, "source": "google"})
+
+    def test_no_polyline_on_google_error(self):
+        with mock.patch.object(booking_eta.http, "get", return_value=_directions_response("ZERO_RESULTS")):
+            route = booking_eta.road_route("b1", ORIGIN, DEST)
+        self.assertIsNone(route["polyline"])
+        self.assertEqual(route["source"], "estimate")
+
+
 if __name__ == "__main__":
     unittest.main()

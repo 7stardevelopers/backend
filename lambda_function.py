@@ -32,6 +32,7 @@ def handle_rest(event, context):
     req = {}
     req_body = None
     error = trace = None
+    html = None
     try:
         req = parse_request(event)
         method, path = req["method"], req["path"]
@@ -46,6 +47,8 @@ def handle_rest(event, context):
                 user_id=req["user_id"],
                 role=req["role"],
             )
+        if status == "html":
+            html, data, status = data, None, "success"
         code = {"success": 200, "created": 201}.get(status, 400)
         body = {"status": status, "data": data}
         if code >= 400:
@@ -80,6 +83,8 @@ def handle_rest(event, context):
         error=error,
         trace=trace,
     )
+    if html is not None:
+        return html_response(code, html)
     return response(code, body)
 
 
@@ -97,6 +102,19 @@ def handle_websocket(event, context):
     if route == "$connect" and status != "success":
         return {"statusCode": 401 if data == "Unauthorized" else 500, "body": str(data)}
     return {"statusCode": 200, "body": "OK"}
+
+
+def html_response(status_code, html):
+    return {
+        "statusCode": status_code,
+        "headers": {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex",
+            "Referrer-Policy": "no-referrer",
+        },
+        "body": html,
+    }
 
 
 def response(status_code, body):

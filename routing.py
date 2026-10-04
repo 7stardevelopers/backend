@@ -8,6 +8,7 @@ from payments.payment_service import PaymentService
 from coupons.coupons_service import CouponsService
 from reviews.reviews_service import ReviewsService
 from support.support_service import SupportService
+from bookings.share_tracking import ShareTrackingService
 from subscriptions.subscriptions_service import SubscriptionsService
 from notifications.notifications_service import NotificationsService
 from places.places_service import PlacesService
@@ -28,6 +29,7 @@ _pay    = PaymentService()
 _coupons = CouponsService()
 _rev    = ReviewsService()
 _supp   = SupportService()
+_share  = ShareTrackingService()
 _subs   = SubscriptionsService()
 _notif  = NotificationsService()
 _places = PlacesService()
@@ -78,6 +80,11 @@ ROUTES = [
     ("PATCH",r"/bookings/(?P<id>[^/]+)/accept",  _books.accept_booking,             ["id"]),
     ("GET",  r"/bookings/(?P<id>[^/]+)$",        _books.get_detail,                 ["id"]),
     ("GET",  r"/bookings/(?P<id>[^/]+)/eta",     _books.get_eta,                    ["id"]),
+    ("GET",  r"/bookings/(?P<id>[^/]+)/route",   _books.get_route,                  ["id"]),
+    ("POST", r"/bookings/(?P<id>[^/]+)/share",   _share.create_link,                ["id"]),
+    # Public share-tracking link (read-only, booking-scoped token in the path)
+    ("GET",  r"/track/(?P<token>[^/]+)/page",    _share.public_page,                ["token"]),
+    ("GET",  r"/track/(?P<token>[^/]+)",         _share.public_snapshot,            ["token"]),
     ("PATCH",r"/bookings/(?P<id>[^/]+)/status", _books.update_status,    ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/cancel",  _books.cancel,          ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/otp-verify", _books.verify_door_otp, ["id"]),
@@ -230,6 +237,8 @@ PUBLIC_ROUTES = {
     ("GET",  r"/reviews/provider/(?P<id>[^/]+)"),
     ("GET",  "/announcements/mine"),
     ("POST", "/calls/status-callback"),   # Exotel webhook — verified by shared secret
+    ("GET",  r"/track/(?P<token>[^/]+)/page"),  # share-tracking link — token-gated
+    ("GET",  r"/track/(?P<token>[^/]+)"),
 }
 
 

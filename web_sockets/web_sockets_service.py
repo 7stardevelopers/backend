@@ -118,16 +118,17 @@ def _is_booking_participant(conn, booking_id, user_id, role=None) -> bool:
 
 
 def _provider_assigned(conn, booking_id, provider_id) -> bool:
+    """True when provider_id is on booking_id and its customer may see live location."""
     from utilities.db_connection import get_table
+    from bookings.live_tracking import is_live_tracking
     b = get_table("bookings")
     row = conn.execute(
         b.select().where(b.c.booking_id == booking_id).where(b.c.provider_id == provider_id)
-        .where(b.c.status.in_(["ACCEPTED", "EN_ROUTE", "IN_PROGRESS"]))
     ).fetchone()
-    return row is not None
+    return row is not None and is_live_tracking(row, conn=conn)
 
 
-def _broadcast_location_to_customer(conn, booking_id: str, lat, lng, updated_at=None):
+def _broadcast_location_to_customer(conn, booking_id: str, lat, lng, updated_at=None, extra=None):
     from utilities.db_connection import get_table
     from utilities.ws_push import push_to_user
     from utilities.common_table_elements import now_utc
@@ -139,6 +140,7 @@ def _broadcast_location_to_customer(conn, booking_id: str, lat, lng, updated_at=
         push_to_user(conn, booking.customer_id, {
             "message_type": "location_update", "lat": lat, "lng": lng, "booking_id": booking_id,
             "updated_at": (updated_at or now_utc()).isoformat(),
+            **{k: v for k, v in (extra or {}).items() if v is not None},
         })
     except Exception as e:
         print(f"[WS] Broadcast location failed (non-fatal): {e}")

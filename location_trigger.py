@@ -1,6 +1,7 @@
 """
 CloudWatch EventBridge triggers this every 15 minutes.
-Finds bookings scheduled within the next 75 minutes and sends live-tracking push notifications.
+Finds bookings scheduled within the next 75 minutes and sends live-tracking push notifications,
+and nudges workers whose location sharing stopped mid-trip.
 """
 import traceback
 
@@ -14,6 +15,9 @@ def handler(event, context):
     try:
         with get_connection() as conn:
             _process_upcoming_bookings(conn)
+        with get_connection() as conn:
+            from bookings.live_tracking import nudge_stale_trackers
+            nudge_stale_trackers(conn)
         return {"statusCode": 200, "body": "OK"}
     except Exception as e:
         print(f"[LocationTrigger] Error: {e}")

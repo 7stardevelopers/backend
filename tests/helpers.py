@@ -47,7 +47,10 @@ CREATE TABLE wallet_ledger (
 );
 CREATE TABLE providers (
     provider_id TEXT PRIMARY KEY, user_id TEXT, status TEXT DEFAULT 'APPROVED',
-    created_at TIMESTAMP
+    avg_rating REAL DEFAULT 0, created_at TIMESTAMP
+);
+CREATE TABLE provider_locations (
+    provider_id TEXT PRIMARY KEY, lat REAL, lng REAL, updated_at TIMESTAMP
 );
 CREATE TABLE call_logs (
     call_id TEXT PRIMARY KEY, booking_id TEXT, initiated_by TEXT, target TEXT,
@@ -59,6 +62,7 @@ CREATE TABLE bookings (
     booking_id TEXT PRIMARY KEY, customer_id TEXT, provider_id TEXT, service_id TEXT,
     status TEXT, door_otp TEXT, door_otp_verified BOOLEAN DEFAULT 0,
     otp_attempt_count INTEGER DEFAULT 0, door_otp_generated_at TIMESTAMP,
+    scheduled_at TIMESTAMP, service_snapshot JSON, address_snapshot JSON,
     updated_at TIMESTAMP, created_at TIMESTAMP
 );
 """

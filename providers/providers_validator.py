@@ -23,6 +23,11 @@ class UpdateProviderProfileSchema(BaseModel):
 class UpdateLocationSchema(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
+    # Optional extras from the device fix; passed through to the customer's map.
+    heading: Optional[float] = Field(None, ge=-1, le=360)   # iOS sends -1 when unknown
+    speed: Optional[float] = Field(None, ge=-1, le=100)     # m/s
+    accuracy: Optional[float] = Field(None, ge=0)
+    mocked: bool = False
 
 
 class ToggleAvailabilitySchema(BaseModel):

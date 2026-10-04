@@ -215,7 +215,10 @@ class BookingsService:
             try:
                 from sqlalchemy import text as _text
                 row = connection.execute(_text("""
-                    SELECT u.name, u.photo_url, p.avg_rating, p.total_reviews
+                    SELECT u.name, u.photo_url, p.avg_rating, p.total_reviews,
+                           p.years_experience, p.status,
+                           (SELECT COUNT(*) FROM bookings cb
+                            WHERE cb.provider_id = p.provider_id AND cb.status = 'COMPLETED') AS total_jobs
                     FROM providers p
                     JOIN users u ON u.user_id = p.user_id
                     WHERE p.provider_id = :pid
@@ -224,7 +227,16 @@ class BookingsService:
                     booking["provider_name"]  = row.name
                     booking["provider_photo"] = row.photo_url
                     booking["provider_rating"] = float(row.avg_rating or 0)
-                loc = ProvidersMaster().get_location(connection, booking["provider_id"])
+                    # Identity line on the tracking screen (Rapido shows the vehicle number here).
+                    booking["provider_years_experience"] = int(row.years_experience or 0)
+                    booking["provider_total_jobs"] = int(row.total_jobs or 0)
+                    booking["provider_verified"] = row.status == "APPROVED"
+                # Providers always see their own location; customers only while the booking is live.
+                from bookings.live_tracking import is_live_tracking, provider_busy_elsewhere
+                busy = provider_busy_elsewhere(connection, booking)
+                booking["provider_busy"] = busy
+                show_loc = role in ("ADMIN", "SUPPORT", "PROVIDER") or (is_live_tracking(booking) and not busy)
+                loc = ProvidersMaster().get_location(connection, booking["provider_id"]) if show_loc else None
                 if loc:
                     booking["provider_lat"] = float(loc["lat"]) if loc.get("lat") else None
                     booking["provider_lng"] = float(loc["lng"]) if loc.get("lng") else None
@@ -255,21 +267,25 @@ class BookingsService:
         self._hide_door_otp(booking, role)
         return "success", booking
 
-    def get_eta(self, obj, connection):
-        """Road distance/ETA from the assigned provider to the booking address —
-        one shared number for the customer and the worker apps."""
+    def _trip_endpoints(self, obj, connection):
+        """(booking_id, origin, dest) for the provider → booking address leg, or
+        None when either point is unknown or the customer may not see it."""
         user_id = obj.pop("_user_id")
         role = obj.pop("_role", None)
         booking_id = obj.get("id") or obj.get("booking_id")
         booking = self.modal.read_one(connection, booking_id)
         if not booking or not booking.get("provider_id"):
             raise ValueError("No expert assigned yet")
+        is_customer = False
         if role not in ("ADMIN", "SUPPORT"):
             is_customer = str(booking.get("customer_id")) == str(user_id)
             prov = ProvidersMaster().find_by_user_id(connection, user_id) if not is_customer else None
             is_provider = bool(prov) and str(prov["provider_id"]) == str(booking["provider_id"])
             if not is_customer and not is_provider:
                 raise PermissionError("Access denied")
+        from bookings.live_tracking import is_live_tracking
+        if is_customer and not is_live_tracking(booking, conn=connection):
+            return None
 
         addr = booking.get("address_snapshot") or {}
         if isinstance(addr, str):
@@ -280,21 +296,33 @@ class BookingsService:
                 addr = {}
         loc = ProvidersMaster().get_location(connection, booking["provider_id"])
         if not loc or loc.get("lat") is None or addr.get("lat") is None or addr.get("lng") is None:
-            return "success", None
+            return None
+        return booking_id, (float(loc["lat"]), float(loc["lng"])), (float(addr["lat"]), float(addr["lng"]))
 
-        from bookings.booking_eta import road_eta
+    @staticmethod
+    def _redis_or_none():
         from utilities.redis_connection import get_redis
         try:
-            redis_client = get_redis()
+            return get_redis()
         except Exception:
-            redis_client = None
-        eta = road_eta(
-            booking_id,
-            (float(loc["lat"]), float(loc["lng"])),
-            (float(addr["lat"]), float(addr["lng"])),
-            redis_client,
-        )
-        return "success", eta
+            return None
+
+    def get_eta(self, obj, connection):
+        """Road distance/ETA from the assigned provider to the booking address —
+        one shared number for the customer and the worker apps."""
+        trip = self._trip_endpoints(obj, connection)
+        if trip is None:
+            return "success", None
+        from bookings.booking_eta import road_eta
+        return "success", road_eta(*trip, self._redis_or_none())
+
+    def get_route(self, obj, connection):
+        """Encoded road polyline + distance/ETA for the customer's live map."""
+        trip = self._trip_endpoints(obj, connection)
+        if trip is None:
+            return "success", None
+        from bookings.booking_eta import road_route
+        return "success", road_route(*trip, self._redis_or_none())
 
     def list_past_providers(self, obj, connection):
         user_id = obj.pop("_user_id")

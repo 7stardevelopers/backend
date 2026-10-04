@@ -46,9 +46,9 @@ class _Handler(BaseHTTPRequestHandler):
         status = result.get("statusCode", 200)
         resp_body = result.get("body", "{}").encode("utf-8")
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        for k, v in (result.get("headers") or {}).items():
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        headers.update(result.get("headers") or {})
+        for k, v in headers.items():
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(resp_body)

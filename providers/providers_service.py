@@ -119,22 +119,37 @@ class ProvidersService:
             raise PermissionError("Provider role required")
         data = UpdateLocationSchema(**obj)
         provider = self._get_or_create_provider(connection, user_id, role)
+        if data.mocked:
+            # Fake-GPS apps would let a worker "arrive" from home. Allowed outside
+            # production so the route can be simulated while testing.
+            from utilities.auth_tokens import is_production
+            print(f"[Location] mocked fix from provider {provider['provider_id']}")
+            if is_production():
+                raise ValueError("Mock locations are not allowed")
         self.modal.upsert_location(connection, provider["provider_id"], data.lat, data.lng)
-        now = __import__("utilities.common_table_elements", fromlist=["now_utc"]).now_utc()
-        self.modal.update(connection, provider["provider_id"], {"last_lat": data.lat, "last_lng": data.lng, "last_seen_at": now})
-        # Broadcast live location to the customer of every booking this provider is on.
-        # ACCEPTED is included: the worker app starts sharing up to 60 min before the slot.
+        from utilities.common_table_elements import now_utc
+        from bookings.live_tracking import _as_utc
+        now = now_utc()
+        # provider_locations above is the live source; the providers row (used for
+        # matching) only needs refreshing every PROVIDER_ROW_REFRESH_S.
+        last_seen = _as_utc(provider.get("last_seen_at"))
+        if last_seen is None or (now - last_seen).total_seconds() >= PROVIDER_ROW_REFRESH_S:
+            self.modal.update(connection, provider["provider_id"], {"last_lat": data.lat, "last_lng": data.lng, "last_seen_at": now})
+        # Broadcast live location only to customers of live-trackable bookings — a
+        # booking ACCEPTED for later must not see where the provider is right now.
         try:
             from web_sockets.web_sockets_service import _broadcast_location_to_customer
-            from utilities.db_connection import get_table
-            bookings_t = get_table("bookings")
-            active = connection.execute(
-                bookings_t.select()
-                .where(bookings_t.c.provider_id == provider["provider_id"])
-                .where(bookings_t.c.status.in_(["ACCEPTED", "EN_ROUTE", "IN_PROGRESS"]))
-            ).fetchall()
-            for b in active:
-                _broadcast_location_to_customer(connection, b.booking_id, data.lat, data.lng, updated_at=now)
+            from bookings.live_tracking import live_tracking_bookings, booking_destination, check_arrival, check_late
+            for b in live_tracking_bookings(connection, provider["provider_id"]):
+                extra = {"heading": data.heading, "speed": data.speed, "accuracy": data.accuracy}
+                eta = None
+                dest = booking_destination(b) if b.status == "EN_ROUTE" else None
+                if dest:
+                    eta = _cached_road_eta(b.booking_id, (data.lat, data.lng), dest)
+                    extra["eta"] = eta
+                _broadcast_location_to_customer(connection, b.booking_id, data.lat, data.lng, updated_at=now, extra=extra)
+                if not check_arrival(connection, b, data.lat, data.lng, eta):
+                    check_late(connection, b, eta)
         except Exception as e:
             print(f"[Location] WS broadcast failed (non-fatal): {e}")
         return "success", {"message": "Location updated"}
@@ -254,3 +269,21 @@ class ProvidersService:
         page     = int(obj.get("page", 1))
         per_page = int(obj.get("per_page", 20))
         return "success", self.modal.list_all_detailed(connection, status, page, per_page)
+
+
+PROVIDER_ROW_REFRESH_S = 30
+
+
+def _cached_road_eta(booking_id, origin, dest):
+    """Shared road ETA (cached 30 s in Redis), or None on any failure."""
+    from bookings.booking_eta import road_eta
+    from utilities.redis_connection import get_redis
+    try:
+        redis_client = get_redis()
+    except Exception:
+        redis_client = None
+    try:
+        return road_eta(booking_id, origin, dest, redis_client)
+    except Exception as e:
+        print(f"[Location] ETA failed (non-fatal): {e}")
+        return None

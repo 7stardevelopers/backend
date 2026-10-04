@@ -67,3 +67,23 @@ def _is_access(payload):
 def _is_refresh(payload):
     typ = payload.get("typ")
     return typ == "refresh" if typ else "jti" in payload
+
+
+# Share-tracking links: a read-only, booking-scoped token. typ "track" is never
+# accepted by decode_access_token, so a leaked link can't call the API.
+TRACK_TOKEN_HOURS = 4
+
+
+def issue_track_token(booking_id: str, hours: int = TRACK_TOKEN_HOURS) -> str:
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    payload = {"typ": "track", "bid": str(booking_id), "iat": now, "exp": now + timedelta(hours=hours)}
+    return jwt.encode(payload, get_jwt_secret(), algorithm="HS256")
+
+
+def decode_track_token(token: str) -> str:
+    """Returns the booking id. Raises PermissionError("Link expired" | "Invalid link")."""
+    payload = _decode(token, "Link expired", "Invalid link")
+    if payload.get("typ") != "track" or not payload.get("bid"):
+        raise PermissionError("Invalid link")
+    return payload["bid"]
