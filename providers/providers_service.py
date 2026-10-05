@@ -31,7 +31,50 @@ class ProvidersService:
         role = obj.pop("_role", None)
         provider = self._get_or_create_provider(connection, user_id, role)
         provider["services"] = self.modal.get_services(connection, provider["provider_id"])
+        # Fresh from users (not the app's cached login) so an admin photo reset is seen.
+        provider["photo_url"] = _user_photo(connection, user_id)
         return "success", provider
+
+    def set_my_photo(self, obj, connection):
+        """The worker's registration selfie. Set once from the app's camera step;
+        after that only an admin reset (admin_reset_photo) allows a new one."""
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        if role != "PROVIDER":
+            raise PermissionError("Provider role required")
+        url = obj.get("photo_url")
+        from media.media_service import is_own_upload
+        if not is_own_upload(url, user_id, "profile"):
+            raise ValueError("Invalid photo upload")
+        self._get_or_create_provider(connection, user_id, role)
+        if _user_photo(connection, user_id):
+            raise PermissionError(PHOTO_LOCKED_MSG)
+        from auth.authorization_modal import UsersMaster
+        UsersMaster().update(connection, user_id, {"photo_url": url})
+        return "success", {"photo_url": url}
+
+    def admin_reset_photo(self, obj, connection):
+        role = obj.pop("_role", None)
+        obj.pop("_user_id", None)
+        if role != "ADMIN":
+            raise PermissionError("Admin role required")
+        provider_id = obj.get("id") or obj.get("provider_id")
+        provider = self.modal.find_by_id(connection, provider_id)
+        if not provider:
+            raise ValueError("Provider not found")
+        from auth.authorization_modal import UsersMaster
+        UsersMaster().update(connection, provider["user_id"], {"photo_url": None})
+        try:
+            self.notif.send_push(
+                connection=connection,
+                user_ids=[provider["user_id"]],
+                title="Please retake your profile photo",
+                body="Open the app to take a new, clear photo of your face.",
+                data={"type": "photo_reset"},
+            )
+        except Exception:
+            pass
+        return "success", {"message": "Profile photo reset"}
 
     def update_profile(self, obj, connection):
         user_id = obj.pop("_user_id")
@@ -228,8 +271,13 @@ class ProvidersService:
         if role != "ADMIN":
             raise PermissionError("Admin role required")
         provider_id = obj.get("id") or obj.get("provider_id")
-        self.modal.update(connection, provider_id, {"status": "APPROVED"})
         provider = self.modal.find_by_id(connection, provider_id)
+        if not provider:
+            raise ValueError("Provider not found")
+        # Customers let this person into their home — no approval without a face on file.
+        if not provider.get("photo_url"):
+            raise ValueError("Provider has no profile photo yet")
+        self.modal.update(connection, provider_id, {"status": "APPROVED"})
         try:
             self.notif.send_push(
                 connection=connection,
@@ -287,3 +335,12 @@ def _cached_road_eta(booking_id, origin, dest):
     except Exception as e:
         print(f"[Location] ETA failed (non-fatal): {e}")
         return None
+
+
+PHOTO_LOCKED_MSG = "Profile photo is locked. Contact support to change it."
+
+
+def _user_photo(connection, user_id):
+    from sqlalchemy import text
+    row = connection.execute(text("SELECT photo_url FROM users WHERE user_id = :uid"), {"uid": user_id}).fetchone()
+    return row.photo_url if row else None

@@ -152,11 +152,16 @@ class AuthorizationService:
 
     def update_profile(self, obj, connection):
         user_id = obj.pop("_user_id", None)
-        obj.pop("_role", None)
+        role = obj.pop("_role", None)
         if not user_id:
             raise PermissionError("Authentication required")
         data = UpdateProfileSchema(**obj)
         fields = {k: v for k, v in data.model_dump().items() if v is not None}
+        # A worker's photo is their registration selfie: set once via POST
+        # /providers/me/photo, changed only through an admin reset.
+        if role == "PROVIDER" and "photo_url" in fields:
+            from providers.providers_service import PHOTO_LOCKED_MSG
+            raise PermissionError(PHOTO_LOCKED_MSG)
         if fields:
             self.modal.update(connection, user_id, fields)
         return "success", {"message": "Profile updated"}

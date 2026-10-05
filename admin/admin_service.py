@@ -268,6 +268,17 @@ class AdminService:
             pass
         return result
 
+    def reset_provider_photo_logged(self, obj, connection):
+        user_id     = obj.get("_user_id")
+        provider_id = obj.get("id")
+        from providers.providers_service import ProvidersService
+        result = ProvidersService().admin_reset_photo(obj, connection)
+        try:
+            self.modal.write_log(connection, user_id, "RESET_PROVIDER_PHOTO", "provider", provider_id)
+        except Exception:
+            pass
+        return result
+
     def suspend_provider_logged(self, obj, connection):
         user_id     = obj.get("_user_id")
         provider_id = obj.get("id")

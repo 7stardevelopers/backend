@@ -4,7 +4,8 @@ from botocore.client import Config
 from utilities.common_table_elements import new_uuid
 from documents.documents_config import ALLOWED_CONTENT_TYPES
 
-ALLOWED_FOLDERS = {"documents", "proof"}
+# "profile": the worker's registration selfie (set once via POST /providers/me/photo).
+ALLOWED_FOLDERS = {"documents", "proof", "profile"}
 
 
 class MediaService:

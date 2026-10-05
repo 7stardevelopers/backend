@@ -129,6 +129,7 @@ ROUTES = [
     ("PATCH","/providers/me/documents",     _prov.set_documents,         []),
     ("PATCH","/providers/me/availability",  _prov.toggle_availability,   []),
     ("PATCH","/providers/me/location-revoked", _prov.report_location_revoked, []),
+    ("POST", "/providers/me/photo",         _prov.set_my_photo,          []),
     ("POST", "/providers/me/temp-approve",  _prov.temp_self_approve,     []),   # TEMPORARY — remove after testing
     ("PATCH","/providers/me/location",      _prov.update_location,       []),
     ("GET",  "/providers/me/earnings",      _prov.get_my_earnings,       []),
@@ -139,6 +140,7 @@ ROUTES = [
     ("PATCH",r"/providers/(?P<id>[^/]+)/approve", _admin.approve_provider_logged, ["id"]),
     ("PATCH",r"/providers/(?P<id>[^/]+)/suspend",  _admin.suspend_provider_logged, ["id"]),
     ("PATCH",r"/admin/providers/(?P<id>[^/]+)/bio", _admin.update_provider_bio_logged, ["id"]),
+    ("PATCH",r"/admin/providers/(?P<id>[^/]+)/photo/reset", _admin.reset_provider_photo_logged, ["id"]),
 
     # DOCUMENTS
     ("POST", "/documents/upload",           _docs.upload,                []),
