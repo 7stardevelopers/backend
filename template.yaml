@@ -55,7 +55,12 @@ Resources:
       Handler: lambda_function.handler
       CodeUri: .
       Timeout: 28   # API Gateway gives up at 29s — fail inside Lambda first
-      Description: 7StarExperts main API handler
+      Description: 7StarExperts main API handler (REST + WebSocket)
+      Environment:
+        Variables:
+          # Management API used to push frames to connected sockets (utilities/ws_push.py).
+          # Template env vars win over Secrets Manager values (env_loader never overrides).
+          WEBSOCKET_ENDPOINT_URL: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
       VpcConfig: !If
         - HasVpc
         - SecurityGroupIds:
@@ -86,7 +91,100 @@ Resources:
           - Effect: Allow
             Action:
               - execute-api:ManageConnections
-            Resource: "*"
+            Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/${Environment}/POST/@connections/*"
+
+  # ── WebSocket API (chat, live tracking) ────────────────────────────────────
+  # Routed by the "action" field of each frame, all handled by ApiFunction
+  # (lambda_function.handle_websocket → routing_wss.py). Keep the route list in
+  # sync with routing_wss.WSS_ROUTES.
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "7starexperts-ws-${Environment}"
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  WebSocketIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiFunction.Arn}/invocations"
+
+  WsConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: "$connect"
+      AuthorizationType: NONE   # JWT is checked in web_sockets_service.on_connect (?token=)
+      Target: !Sub "integrations/${WebSocketIntegration}"
+
+  WsDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: "$disconnect"
+      Target: !Sub "integrations/${WebSocketIntegration}"
+
+  WsDefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: "$default"
+      Target: !Sub "integrations/${WebSocketIntegration}"
+
+  WsSendMessageRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: sendMessage
+      Target: !Sub "integrations/${WebSocketIntegration}"
+
+  WsLocationUpdateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: locationUpdate
+      Target: !Sub "integrations/${WebSocketIntegration}"
+
+  WsMarkSeenRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: markSeen
+      Target: !Sub "integrations/${WebSocketIntegration}"
+
+  WsMarkDeliveredRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: markDelivered
+      Target: !Sub "integrations/${WebSocketIntegration}"
+
+  WsJoinBookingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: joinBooking
+      Target: !Sub "integrations/${WebSocketIntegration}"
+
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: !Ref Environment
+      AutoDeploy: true          # route changes go live on every deploy
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 200
+        ThrottlingRateLimit: 100
+
+  WebSocketInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApiFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
 
   LocationTriggerFunction:
     Type: AWS::Serverless::Function
@@ -117,3 +215,9 @@ Outputs:
   ApiUrl:
     Description: API Gateway endpoint URL
     Value: !Sub "https://${ServerlessRestApi}.execute-api.ap-south-1.amazonaws.com/Prod/"
+  WebSocketUrl:
+    Description: WebSocket URL for the apps (EXPO_PUBLIC_WSS_URL)
+    Value: !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+  WebSocketManagementUrl:
+    Description: Management endpoint the Lambda posts to (WEBSOCKET_ENDPOINT_URL, set automatically)
+    Value: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
