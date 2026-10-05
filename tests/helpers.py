@@ -58,6 +58,14 @@ CREATE TABLE call_logs (
     end_time TIMESTAMP, recording_url TEXT, error_message TEXT,
     created_at TIMESTAMP, updated_at TIMESTAMP
 );
+CREATE TABLE chat_messages (
+    message_id TEXT PRIMARY KEY, booking_id TEXT, from_id TEXT, to_id TEXT, text TEXT,
+    message_type TEXT DEFAULT 'text', seen_at TIMESTAMP, delivered_at TIMESTAMP,
+    created_at TIMESTAMP
+);
+CREATE TABLE ws_connections (
+    connection_id TEXT PRIMARY KEY, user_id TEXT, booking_id TEXT, role TEXT, connected_at TIMESTAMP
+);
 CREATE TABLE bookings (
     booking_id TEXT PRIMARY KEY, customer_id TEXT, provider_id TEXT, service_id TEXT,
     status TEXT, door_otp TEXT, door_otp_verified BOOLEAN DEFAULT 0,

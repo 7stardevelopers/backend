@@ -7,7 +7,8 @@ WSS_ROUTES = {
     "$disconnect":   _wss.on_disconnect,
     "sendMessage":   _wss.on_message,
     "locationUpdate": _wss.on_location,
-    "markDelivered": _wss.on_mark_delivered,
+    "markSeen":      _wss.on_mark_seen,
+    "markDelivered": _wss.on_mark_delivered,   # legacy alias of markSeen
     "joinBooking":   _wss.on_join_booking,
     "$default":      _wss.on_default,
 }

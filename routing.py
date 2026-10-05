@@ -94,6 +94,7 @@ ROUTES = [
     ("POST", r"/bookings/(?P<id>[^/]+)/rebook",   _books.rebook,             ["id"]),
     ("GET",  r"/bookings/(?P<id>[^/]+)/messages", _msgs.list_messages,       ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/messages", _msgs.send_message,        ["id"]),
+    ("POST", r"/bookings/(?P<id>[^/]+)/messages/seen", _msgs.mark_seen,      ["id"]),
 
     # INSTANT BOOKINGS
     ("POST", "/instant-bookings",           _ibooks.create_instant,      []),

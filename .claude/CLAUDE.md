@@ -62,7 +62,12 @@ Every route requires a valid access token except those listed in `PUBLIC_ROUTES`
 API Gateway WebSocket → lambda_function.handle_websocket
   → routing_wss.dispatch_wss → web_sockets/web_sockets_service.py
 ```
-Routes: `$connect`, `$disconnect`, `sendMessage`, `locationUpdate`, `markDelivered`, `$default`. JWT is passed as a `?token=` query param on `$connect` (no Authorization header on WebSocket).
+Routes: `$connect`, `$disconnect`, `sendMessage`, `locationUpdate`, `markSeen` (`markDelivered` = legacy alias), `joinBooking`, `$default`. JWT is passed as a `?token=` query param on `$connect` (no Authorization header on WebSocket).
+
+**WebSocket API is defined in `template.yaml`** (`WebSocketApi`, one route per `routing_wss.WSS_ROUTES` key, stage = `Environment`, AutoDeploy). Every deploy creates/updates it and sets `WEBSOCKET_ENDPOINT_URL` on the API Lambda automatically. The app URL (`EXPO_PUBLIC_WSS_URL`) is the stack output `WebSocketUrl`. **When adding a WS route, add it to both `routing_wss.py` and `template.yaml`.**
+
+### Chat
+`chat/messages_service.py`. Open only while the booking is `ACCEPTED / EN_ROUTE / IN_PROGRESS` (read-only otherwise); max 1000 chars, `message_type` `text`, 20 msgs/min/user/booking (Redis). Phone numbers / emails / UPI IDs are masked (`utilities/contact_masking.py`). A send pushes WS frame `{message_type: "chat", content_type, ...message}` to **both** participants — the sender's copy carries the client's `client_id`. WS send failures push `{message_type: "chat_error", client_id, error}` to the sending socket. `markSeen` / `POST /bookings/{id}/messages/seen` / `GET …/messages?mark_seen=1` set `seen_at` and push `chat_seen` to the other party; plain GETs never mark seen. GET supports `?before=<message_id>&limit=` and `?since=<iso>`. All chat timestamps are ISO-8601 UTC with `Z` (`utilities/time_format.py`). New messages send an Expo push (`type: new_message`, not recorded in in-app notifications).
 
 ### Module structure
 Every feature module follows the same three-file pattern:

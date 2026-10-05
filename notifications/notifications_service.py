@@ -15,7 +15,8 @@ class NotificationsService:
     def register_token(self, obj, connection):
         user_id = obj.pop("_user_id")
         obj.pop("_role", None)
-        token_id = obj.get("token_id") or obj.get("expo_push_token")
+        # Worker app sends token_id; Customer app sends token — accept both.
+        token_id = obj.get("token_id") or obj.get("expo_push_token") or obj.get("token")
         device_type = obj.get("device_type")
         if not token_id:
             raise ValueError("token_id required")
@@ -80,16 +81,20 @@ class NotificationsService:
             )
         return "success", {"message": f"Announcement sent to {len(token_ids)} devices"}
 
-    def send_push(self, connection, user_ids: list, title: str, body: str, data: dict = None):
+    def send_push(self, connection, user_ids: list, title: str, body: str, data: dict = None,
+                  record_in_app: bool = True):
         # In-app record first — users without a push token still get it.
-        try:
-            from notifications.in_app_notifications.in_app_notifications_service import InAppNotificationsService
-            InAppNotificationsService().record_and_push(
-                connection, user_ids, title, body,
-                (data or {}).get("type", "system"), data or {}
-            )
-        except Exception as e:
-            print(f"[Notify] In-app push failed (non-fatal): {e}")
+        # Chat messages pass record_in_app=False so they don't flood the
+        # Notifications screen (the chat itself is the record).
+        if record_in_app:
+            try:
+                from notifications.in_app_notifications.in_app_notifications_service import InAppNotificationsService
+                InAppNotificationsService().record_and_push(
+                    connection, user_ids, title, body,
+                    (data or {}).get("type", "system"), data or {}
+                )
+            except Exception as e:
+                print(f"[Notify] In-app push failed (non-fatal): {e}")
         try:
             token_rows = self.modal.get_tokens_for_users(connection, user_ids)
             tokens = [r["token_id"] for r in token_rows if (r.get("token_id") or "").startswith("ExponentPushToken[")]
