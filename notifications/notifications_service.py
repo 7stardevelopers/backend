@@ -15,7 +15,8 @@ class NotificationsService:
     def register_token(self, obj, connection):
         user_id = obj.pop("_user_id")
         obj.pop("_role", None)
-        token_id = obj.get("token_id") or obj.get("expo_push_token")
+        # Worker app sends token_id; Customer app sends token — accept both.
+        token_id = obj.get("token_id") or obj.get("expo_push_token") or obj.get("token")
         device_type = obj.get("device_type")
         if not token_id:
             raise ValueError("token_id required")
