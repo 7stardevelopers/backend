@@ -25,25 +25,28 @@ def _get_client():
     return _client
 
 
-def push_to_user(conn, user_id: str, payload: dict):
-    """Send payload to every open WebSocket connection of user_id. Non-fatal."""
+def push_to_user(conn, user_id: str, payload: dict) -> int:
+    """Send payload to every open WebSocket connection of user_id. Non-fatal.
+    Returns how many sockets it was delivered to."""
     client = _get_client()
     if client is None:
-        return
+        return 0
     ws_t = get_table("ws_connections")
     rows = conn.execute(ws_t.select().where(ws_t.c.user_id == str(user_id))).fetchall()
-    push_to_connections(conn, [r.connection_id for r in rows], payload)
+    return push_to_connections(conn, [r.connection_id for r in rows], payload)
 
 
-def push_to_connections(conn, connection_ids: list, payload: dict):
+def push_to_connections(conn, connection_ids: list, payload: dict) -> int:
     client = _get_client()
     if client is None or not connection_ids:
-        return
+        return 0
     data = json.dumps(payload, default=str).encode()
     stale = []
+    delivered = 0
     for cid in connection_ids:
         try:
             client.post_to_connection(ConnectionId=cid, Data=data)
+            delivered += 1
         except client.exceptions.GoneException:
             stale.append(cid)
         except Exception as e:
@@ -51,3 +54,4 @@ def push_to_connections(conn, connection_ids: list, payload: dict):
     if stale:
         ws_t = get_table("ws_connections")
         conn.execute(ws_t.delete().where(ws_t.c.connection_id.in_(stale)))
+    return delivered

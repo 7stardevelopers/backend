@@ -29,15 +29,30 @@ class WebSocketsService:
         if not ws_record:
             return "error", "Connection not found"
         from chat.messages_service import MessagesService
-        svc = MessagesService()
-        result = svc.send_message({
-            "_user_id": ws_record["user_id"],
-            "_role": ws_record.get("role"),
-            "booking_id": body.get("booking_id") or ws_record.get("booking_id"),
-            "text": body.get("text", ""),
-            "message_type": body.get("message_type", "text"),
-        }, conn)
-        return result
+        from pydantic import ValidationError
+        booking_id = body.get("booking_id") or ws_record.get("booking_id")
+        client_id = body.get("client_id")
+        try:
+            return MessagesService().send_message({
+                "_user_id": ws_record["user_id"],
+                "_role": ws_record.get("role"),
+                "booking_id": booking_id,
+                "text": body.get("text", ""),
+                "message_type": body.get("message_type", "text"),
+                "client_id": client_id,
+            }, conn)
+        except (ValueError, PermissionError, ValidationError) as e:
+            # Tell the sender instead of failing silently (the socket route
+            # always answers 200, so the app would otherwise think it was sent).
+            from utilities.ws_push import push_to_connections
+            reason = _friendly_validation_error(e) if isinstance(e, ValidationError) else str(e)
+            push_to_connections(conn, [connection_id], {
+                "message_type": "chat_error",
+                "booking_id": booking_id,
+                "client_id": client_id,
+                "error": reason,
+            })
+            return "error", reason
 
     def on_location(self, connection_id: str, event: dict, conn):
         body = _parse_body(event)
@@ -58,16 +73,25 @@ class WebSocketsService:
                 _broadcast_location_to_customer(conn, booking_id, float(lat), float(lng))
         return "success", "Location updated"
 
-    def on_mark_delivered(self, connection_id: str, event: dict, conn):
+    def on_mark_seen(self, connection_id: str, event: dict, conn):
+        """WS "markSeen" (and legacy "markDelivered"): mark messages to me as seen
+        and tell the other participant (blue ticks)."""
         body = _parse_body(event)
         ws_record = self.modal.get_connection(conn, connection_id)
         if not ws_record:
             return "error", "Connection not found"
-        booking_id = body.get("booking_id")
-        if booking_id and _is_booking_participant(conn, booking_id, ws_record["user_id"], ws_record.get("role")):
-            from chat.messages_modal import MessagesMaster
-            MessagesMaster().mark_seen(conn, booking_id, ws_record["user_id"])
-        return "success", "Delivered"
+        booking_id = body.get("booking_id") or ws_record.get("booking_id")
+        if not booking_id:
+            return "error", "booking_id required"
+        from chat.messages_service import MessagesService
+        try:
+            return MessagesService().mark_seen(
+                {"_user_id": ws_record["user_id"], "_role": ws_record.get("role"), "booking_id": booking_id}, conn
+            )
+        except (ValueError, PermissionError) as e:
+            return "error", str(e)
+
+    on_mark_delivered = on_mark_seen
 
     def on_join_booking(self, connection_id: str, event: dict, conn):
         body = _parse_body(event)
@@ -144,3 +168,16 @@ def _broadcast_location_to_customer(conn, booking_id: str, lat, lng, updated_at=
         })
     except Exception as e:
         print(f"[WS] Broadcast location failed (non-fatal): {e}")
+
+
+def _friendly_validation_error(e) -> str:
+    try:
+        first = e.errors()[0]
+        field = ".".join(str(p) for p in first.get("loc", ()))
+        if field == "text" and first.get("type") == "string_too_long":
+            return "Message is too long"
+        if field == "text":
+            return "Message can't be empty"
+        return first.get("msg") or "Invalid message"
+    except Exception:
+        return "Invalid message"
