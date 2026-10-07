@@ -41,9 +41,52 @@ class MediaService:
         return "success", {"upload_url": upload_url, "object_url": object_url}
 
 
+def _media_bucket():
+    return os.environ.get("S3_MEDIA_BUCKET", "7sx-media-staging"), os.environ.get("AWS_REGION_NAME", "ap-south-1")
+
+
+def _media_prefix() -> str:
+    bucket, region = _media_bucket()
+    return f"https://{bucket}.s3.{region}.amazonaws.com/"
+
+
 def is_own_upload(url: str, user_id: str, folder: str) -> bool:
     """True if url points at an object this user uploaded into folder via /media/presign."""
-    bucket = os.environ.get("S3_MEDIA_BUCKET", "7sx-media-staging")
-    region = os.environ.get("AWS_REGION_NAME", "ap-south-1")
-    prefix = f"https://{bucket}.s3.{region}.amazonaws.com/{folder}/{user_id}/"
+    prefix = f"{_media_prefix()}{folder}/{user_id}/"
     return isinstance(url, str) and url.startswith(prefix) and ".." not in url
+
+
+def _map_media_strings(data, fn, prefix):
+    if isinstance(data, str):
+        return fn(data) if data.startswith(prefix) else data
+    if isinstance(data, dict):
+        return {k: _map_media_strings(v, fn, prefix) for k, v in data.items()}
+    if isinstance(data, (list, tuple)):
+        return [_map_media_strings(v, fn, prefix) for v in data]
+    return data
+
+
+def sign_media_urls(data, expires: int = 3600):
+    """The media bucket is private: swap every plain media-bucket URL in an API
+    response for a short-lived presigned GET URL the apps' <Image> can load.
+    The DB keeps the plain URL (see strip_media_signatures)."""
+    bucket, region = _media_bucket()
+    prefix = _media_prefix()
+    s3 = None
+
+    def sign(url):
+        nonlocal s3
+        if "?" in url:
+            return url
+        if s3 is None:
+            s3 = boto3.client("s3", region_name=region, config=Config(signature_version='s3v4'))
+        return s3.generate_presigned_url(
+            "get_object", Params={"Bucket": bucket, "Key": url[len(prefix):]}, ExpiresIn=expires,
+        )
+
+    return _map_media_strings(data, sign, prefix)
+
+
+def strip_media_signatures(data):
+    """Turn signed media URLs a client echoes back into the plain stored form."""
+    return _map_media_strings(data, lambda url: url.split("?", 1)[0], _media_prefix())

@@ -15,6 +15,7 @@ get_engine()
 from request_handler import parse_request
 from routing import dispatch_rest, RouteNotFound
 from routing_wss import dispatch_wss
+from media.media_service import sign_media_urls, strip_media_signatures
 
 
 def handler(event, context):
@@ -36,6 +37,7 @@ def handle_rest(event, context):
     try:
         req = parse_request(event)
         method, path = req["method"], req["path"]
+        req["body"] = strip_media_signatures(req["body"])
         # Snapshot before dispatch — services pop keys out of obj.
         req_body = dict(req["body"]) if isinstance(req["body"], dict) else req["body"]
         with get_connection() as conn:
@@ -83,6 +85,13 @@ def handle_rest(event, context):
         error=error,
         trace=trace,
     )
+    # Logged above with plain URLs; the apps get loadable signed ones. Presign's
+    # object_url stays plain — the app posts it back to be stored.
+    if code < 400 and body.get("data") is not None and path != "/media/presign":
+        try:
+            body["data"] = sign_media_urls(body["data"])
+        except Exception as e:
+            print(f"[MEDIA SIGN ERROR] {method} {path}: {e}")
     if html is not None:
         return html_response(code, html)
     return response(code, body)
