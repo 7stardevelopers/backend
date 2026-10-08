@@ -62,6 +62,45 @@ class BookingsMaster:
             raise ValueError("Booking status changed — please refresh and try again")
         return self.read_one(conn, booking_id)
 
+    # ── Two-sided completion: worker AND customer must tap "Done" ─────────
+
+    def mark_done(self, conn, booking_id: str, side: str) -> bool:
+        """Record one side's "Done" (side = 'provider' | 'customer'). Only while
+        IN_PROGRESS and only the first tap counts. Returns True if it was recorded."""
+        col = {"provider": self.t.c.provider_done_at, "customer": self.t.c.customer_done_at}[side]
+        result = conn.execute(
+            self.t.update()
+            .where(self.t.c.booking_id == booking_id)
+            .where(self.t.c.status == "IN_PROGRESS")
+            .where(col.is_(None))
+            .values({col.name: now_utc(), "updated_at": now_utc()})
+        )
+        return result.rowcount == 1
+
+    def try_finish(self, conn, booking_id: str) -> bool:
+        """IN_PROGRESS → COMPLETED once both sides are done and nothing is disputed.
+        Conditional, so if both tap at the same moment exactly one call wins."""
+        result = conn.execute(
+            self.t.update()
+            .where(self.t.c.booking_id == booking_id)
+            .where(self.t.c.status == "IN_PROGRESS")
+            .where(self.t.c.provider_done_at.isnot(None))
+            .where(self.t.c.customer_done_at.isnot(None))
+            .where(self.t.c.completion_disputed_at.is_(None))
+            .values(status="COMPLETED", updated_at=now_utc())
+        )
+        return result.rowcount == 1
+
+    def mark_disputed(self, conn, booking_id: str) -> bool:
+        result = conn.execute(
+            self.t.update()
+            .where(self.t.c.booking_id == booking_id)
+            .where(self.t.c.status == "IN_PROGRESS")
+            .where(self.t.c.completion_disputed_at.is_(None))
+            .values(completion_disputed_at=now_utc(), updated_at=now_utc())
+        )
+        return result.rowcount == 1
+
     def verify_door_otp(self, conn, booking_id: str, otp: str) -> bool:
         """Atomically mark the OTP verified and start the job. Only succeeds once,
         from ACCEPTED/EN_ROUTE, with the right OTP."""

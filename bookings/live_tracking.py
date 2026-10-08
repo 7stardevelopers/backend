@@ -39,7 +39,8 @@ def _in_window(booking, now=None) -> bool:
     get = _getter(booking)
     status = get("status")
     if status in LIVE_STATUSES:
-        return True
+        # Worker tapped Done and may have left for the next job — stop sharing.
+        return not get("provider_done_at")
     if status != "ACCEPTED":
         return False
     scheduled = _as_utc(get("scheduled_at"))
@@ -60,6 +61,7 @@ def provider_busy_elsewhere(conn, booking) -> bool:
         .where(b.c.provider_id == get("provider_id"))
         .where(b.c.booking_id != get("booking_id"))
         .where(b.c.status.in_(LIVE_STATUSES))
+        .where(b.c.provider_done_at.is_(None))
         .limit(1)
     ).fetchone()
     return row is not None
@@ -81,7 +83,7 @@ def live_tracking_bookings(conn, provider_id, now=None) -> list:
         .where(b.c.provider_id == provider_id)
         .where(b.c.status.in_(("ACCEPTED",) + LIVE_STATUSES))
     ).fetchall()
-    rows = [r for r in rows if _in_window(r, now)]
+    rows = [r for r in rows if _in_window(r, now)]   # drops jobs the worker already marked done
     if any(r.status in LIVE_STATUSES for r in rows):
         rows = [r for r in rows if r.status in LIVE_STATUSES]
     return rows

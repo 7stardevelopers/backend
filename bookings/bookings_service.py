@@ -21,8 +21,9 @@ MAX_OTP_ATTEMPTS = 5
 
 # PENDING → ACCEPTED goes through accept_booking (claim) and
 # EN_ROUTE/ACCEPTED → IN_PROGRESS only through verify_door_otp, so neither the
-# claim nor the door OTP can be bypassed via PATCH /status. Provider COMPLETED
-# goes through complete().
+# claim nor the door OTP can be bypassed via PATCH /status. IN_PROGRESS →
+# COMPLETED needs BOTH complete() (worker, proof photos) and confirm_complete()
+# (customer, in their own app) — in either order. Admin can still force it.
 ALLOWED_TRANSITIONS = {
     "PROVIDER": {
         "ACCEPTED":    ["EN_ROUTE"],
@@ -437,11 +438,105 @@ class BookingsService:
             raise PermissionError("You are not assigned to this booking")
         if booking["status"] != "IN_PROGRESS":
             raise ValueError("Booking must be IN_PROGRESS to complete")
+        if booking.get("provider_done_at"):
+            raise ValueError("You've already marked this job done — waiting for the customer to confirm")
         if proof_photos:
             self.modal.update_proof_photos(connection, booking_id, proof_photos)
-        updated = self.modal.update_status(connection, booking_id, "COMPLETED", expected_status="IN_PROGRESS")
-        self._notify_status_change(connection, updated, "COMPLETED")
-        return "success", {"message": "Booking completed"}
+        if not self.modal.mark_done(connection, booking_id, "provider"):
+            raise ValueError("Booking status changed — please refresh and try again")
+        if self.modal.try_finish(connection, booking_id):
+            self._on_completed(connection, booking_id)
+            return "success", {"message": "Booking completed", "status": "COMPLETED"}
+        # The customer still has to confirm in their own app — never a code the
+        # worker could ask for and type in.
+        self._push(connection, [booking["customer_id"]],
+                   "Your expert marked the job done",
+                   "Please check the work and tap \"Work done\" to confirm.",
+                   {"type": "completion_requested", "booking_id": booking_id})
+        return "success", {"message": "Waiting for the customer to confirm",
+                           "status": "IN_PROGRESS", "waiting_for": "customer"}
+
+    def confirm_complete(self, obj, connection):
+        """Customer's half of completion: POST /bookings/{id}/confirm-complete."""
+        user_id = obj.pop("_user_id")
+        obj.pop("_role", None)
+        booking_id = obj.get("id") or obj.get("booking_id")
+        booking = self.modal.read_one(connection, booking_id)
+        if str(booking.get("customer_id")) != str(user_id):
+            raise PermissionError("Access denied")
+        if booking["status"] != "IN_PROGRESS":
+            raise ValueError("You can confirm only while the job is in progress")
+        if booking.get("completion_disputed_at"):
+            raise ValueError("You reported a problem with this job — support will contact you")
+        if booking.get("customer_done_at"):
+            raise ValueError("You've already confirmed — waiting for your expert to finish")
+        if not self.modal.mark_done(connection, booking_id, "customer"):
+            raise ValueError("Booking status changed — please refresh and try again")
+        if self.modal.try_finish(connection, booking_id):
+            self._on_completed(connection, booking_id)
+            return "success", {"message": "Booking completed", "status": "COMPLETED"}
+        self._push(connection, [self._provider_user_id(connection, booking)],
+                   "Customer confirmed the job is done",
+                   "Tap \"Mark as Complete\" to finish the job.",
+                   {"type": "completion_confirmed", "booking_id": booking_id})
+        return "success", {"message": "Waiting for your expert to finish",
+                           "status": "IN_PROGRESS", "waiting_for": "provider"}
+
+    def report_problem(self, obj, connection):
+        """Customer says the work isn't done: POST /bookings/{id}/report-problem.
+        Blocks completion and opens a support ticket for the booking."""
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        booking_id = obj.get("id") or obj.get("booking_id")
+        message = str(obj.get("message") or "").strip()
+        if not message:
+            raise ValueError("Please describe the problem")
+        if len(message) > 1000:
+            raise ValueError("Please keep it under 1000 characters")
+        booking = self.modal.read_one(connection, booking_id)
+        if str(booking.get("customer_id")) != str(user_id):
+            raise PermissionError("Access denied")
+        if booking["status"] != "IN_PROGRESS":
+            raise ValueError("You can report a problem only while the job is in progress")
+        if not self.modal.mark_disputed(connection, booking_id):
+            raise ValueError("A problem is already reported for this booking — support will contact you")
+
+        from support.support_service import SupportService
+        support = SupportService()
+        _, ticket = support.create_ticket({
+            "_user_id": user_id, "_role": role,
+            "subject": f"Job not completed: {message}"[:200],
+            "category": "SERVICE_ISSUE", "booking_id": booking_id, "priority": "HIGH",
+        }, connection)
+        support.modal.add_message(connection, ticket["ticket_id"], user_id, message)
+
+        self._push(connection, [self._provider_user_id(connection, booking)],
+                   "Customer reported a problem",
+                   "The customer says the job isn't finished. Support will contact you.",
+                   {"type": "completion_disputed", "booking_id": booking_id})
+        return "success", {"message": "Problem reported — support will contact you",
+                           "ticket_id": ticket["ticket_id"]}
+
+    def _on_completed(self, connection, booking_id):
+        booking = self.modal.read_one(connection, booking_id)
+        self._notify_status_change(connection, booking, "COMPLETED")
+        self._push(connection, [self._provider_user_id(connection, booking)],
+                   "Job completed", "Both sides confirmed. Your earnings are updated.",
+                   {"type": "booking_update", "booking_id": booking_id, "status": "COMPLETED"})
+
+    @staticmethod
+    def _provider_user_id(connection, booking):
+        prov = ProvidersMaster().find_by_id(connection, booking.get("provider_id")) if booking.get("provider_id") else None
+        return str(prov["user_id"]) if prov else None
+
+    def _push(self, connection, user_ids, title, body, data):
+        user_ids = [str(u) for u in user_ids if u]
+        if not user_ids:
+            return
+        try:
+            self.notif.send_push(connection=connection, user_ids=user_ids, title=title, body=body, data=data)
+        except Exception as e:
+            print(f"[Notify] Completion notification failed (non-fatal): {e}")
 
     def cancel(self, obj, connection):
         user_id = obj.pop("_user_id")

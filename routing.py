@@ -91,6 +91,8 @@ ROUTES = [
     ("POST", r"/bookings/(?P<id>[^/]+)/otp-regenerate", _books.regenerate_door_otp, ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/tip",   _books.add_tip,           ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/complete", _books.complete,        ["id"]),
+    ("POST", r"/bookings/(?P<id>[^/]+)/confirm-complete", _books.confirm_complete, ["id"]),
+    ("POST", r"/bookings/(?P<id>[^/]+)/report-problem",   _books.report_problem,   ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/rebook",   _books.rebook,             ["id"]),
     ("GET",  r"/bookings/(?P<id>[^/]+)/messages", _msgs.list_messages,       ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/messages", _msgs.send_message,        ["id"]),

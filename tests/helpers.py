@@ -70,8 +70,17 @@ CREATE TABLE bookings (
     booking_id TEXT PRIMARY KEY, customer_id TEXT, provider_id TEXT, service_id TEXT,
     status TEXT, door_otp TEXT, door_otp_verified BOOLEAN DEFAULT 0,
     otp_attempt_count INTEGER DEFAULT 0, door_otp_generated_at TIMESTAMP,
-    scheduled_at TIMESTAMP, service_snapshot JSON, address_snapshot JSON,
+    scheduled_at TIMESTAMP, service_snapshot JSON, address_snapshot JSON, proof_photos JSON,
+    provider_done_at TIMESTAMP, customer_done_at TIMESTAMP, completion_disputed_at TIMESTAMP,
     updated_at TIMESTAMP, created_at TIMESTAMP
+);
+CREATE TABLE support_tickets (
+    ticket_id TEXT PRIMARY KEY, user_id TEXT, subject TEXT, category TEXT, booking_id TEXT,
+    priority TEXT, status TEXT, created_at TIMESTAMP, updated_at TIMESTAMP
+);
+CREATE TABLE ticket_messages (
+    message_id TEXT PRIMARY KEY, ticket_id TEXT, sender_id TEXT, content TEXT,
+    is_internal BOOLEAN DEFAULT 0, created_at TIMESTAMP
 );
 """
 

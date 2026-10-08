@@ -75,5 +75,8 @@ def _busy_provider_ids(connection) -> set:
     rows = connection.execute(text("""
         SELECT DISTINCT provider_id FROM bookings
         WHERE provider_id IS NOT NULL AND status IN ('EN_ROUTE', 'IN_PROGRESS')
+          AND provider_done_at IS NULL
     """)).fetchall()
+    # provider_done_at: the worker tapped Done and is only waiting for the
+    # customer to confirm — they're free for the next job.
     return {r.provider_id for r in rows}

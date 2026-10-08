@@ -96,6 +96,7 @@ class AdminMaster:
                    b.payment_status, b.created_at, b.customer_id, b.provider_id,
                    cu.name  AS customer_name, cu.phone AS customer_phone,
                    pu.name  AS provider_name, pr.user_id AS provider_user_id,
+                   b.provider_done_at, b.customer_done_at, b.completion_disputed_at,
                    s.name   AS service_name
             FROM bookings b
             LEFT JOIN users     cu ON b.customer_id = cu.user_id
