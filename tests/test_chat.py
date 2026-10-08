@@ -165,6 +165,37 @@ class ListAndSeenTests(ChatTestBase):
         with self.assertRaises(PermissionError):
             self.listing(user="other")
 
+    def set_status(self, status):
+        self.conn.execute(__import__("sqlalchemy").text(
+            "UPDATE bookings SET status=:s WHERE booking_id='b1'"), {"s": status})
+
+    def test_participants_cannot_read_after_booking_ends(self):
+        for status in chat_mod.CHAT_ENDED_STATUSES:
+            self.set_status(status)
+            for user in ("cust", "wkr"):
+                with self.assertRaises(PermissionError) as ctx:
+                    self.listing(user=user)
+                self.assertEqual(str(ctx.exception), chat_mod.CHAT_ENDED_MESSAGE)
+
+    def test_admin_and_support_can_read_after_booking_ends(self):
+        self.set_status("COMPLETED")
+        for role in ("ADMIN", "SUPPORT"):
+            _, msgs = self.svc.list_messages({"_user_id": "staff", "_role": role, "id": "b1"}, self.conn)
+            self.assertEqual(len(msgs), 5)
+        # Staff reads never flip read receipts.
+        self.assertTrue(all(m["seen_at"] is None for m in msgs))
+
+    def test_participants_can_read_while_live(self):
+        for status in chat_mod.CHAT_OPEN_STATUSES:
+            self.set_status(status)
+            self.assertEqual(len(self.listing(user="cust")), 5)
+
+    def test_mark_seen_noop_after_booking_ends(self):
+        self.set_status("COMPLETED")
+        _, out = self.svc.mark_seen({"_user_id": "wkr", "_role": None, "id": "b1"}, self.conn)
+        self.assertEqual(out["marked"], 0)
+        self.assertEqual(self.frames("cust", "chat_seen"), [])
+
 
 class WebSocketTests(ChatTestBase):
     def setUp(self):

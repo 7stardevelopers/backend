@@ -5,8 +5,11 @@ from utilities.contact_masking import mask_contact_info
 from utilities.time_format import to_iso_utc, parse_iso_utc
 
 # Chat is open while an expert is assigned and the job isn't finished.
-# Outside this window the thread is read-only.
 CHAT_OPEN_STATUSES = ("ACCEPTED", "EN_ROUTE", "IN_PROGRESS")
+# Once the booking ends the thread is hidden from both participants (like
+# Rapido). Messages are kept — admin/support can still read them.
+CHAT_ENDED_STATUSES = ("COMPLETED", "CANCELLED", "REJECTED")
+CHAT_ENDED_MESSAGE = "Chat has ended for this booking"
 CHAT_RATE_PER_MIN = 20
 PUSH_PREVIEW_CHARS = 120
 
@@ -111,6 +114,8 @@ class MessagesService:
         is_provider = bool(prov_user_id) and str(user_id) == prov_user_id
         if not is_customer and not is_provider and role not in ("ADMIN", "SUPPORT"):
             raise PermissionError("Access denied")
+        if (is_customer or is_provider) and booking["status"] in CHAT_ENDED_STATUSES:
+            raise PermissionError(CHAT_ENDED_MESSAGE)
 
         since = None
         if obj.get("since"):
@@ -145,6 +150,8 @@ class MessagesService:
             other = customer_id
         else:
             raise PermissionError("You are not a participant of this booking")
+        if booking["status"] in CHAT_ENDED_STATUSES:
+            return "success", {"marked": 0, "seen_at": None}
         count, seen_at = self._mark_seen_and_notify(connection, booking_id, user_id, other)
         return "success", {"marked": count, "seen_at": to_iso_utc(seen_at)}
 
