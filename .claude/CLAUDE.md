@@ -106,9 +106,13 @@ All amounts are computed server-side in `bookings/booking_pricing.py` from `serv
 PENDING → ACCEPTED            POST/PATCH /bookings/{id}/accept (approved providers only, atomic claim)
 ACCEPTED → EN_ROUTE           PATCH /status (provider)
 ACCEPTED|EN_ROUTE → IN_PROGRESS   POST /otp-verify only (door OTP cannot be skipped)
-IN_PROGRESS → COMPLETED       POST /complete (provider) or admin
+IN_PROGRESS → COMPLETED       only when BOTH: POST /complete (provider, proof photos) AND
+                              POST /confirm-complete (customer, in their own app) — either order; or admin
+                              POST /report-problem (customer) blocks completion + opens a support ticket
 PENDING|ACCEPTED → CANCELLED  customer (own bookings) / admin; admin also from EN_ROUTE, IN_PROGRESS
 ```
+Two-sided completion (`migrations/003_dual_completion.sql`): `provider_done_at` / `customer_done_at` / `completion_disputed_at` on `bookings`; `BookingsMaster.try_finish` flips to COMPLETED atomically once both are set and nothing is disputed. Nothing auto-completes (a worker could otherwise leave before finishing): `bookings/completion_reminders.py` (run by `location_trigger`) reminds the customer at 30 min / 2 h and logs `COMPLETION_UNCONFIRMED` for admin after 24 h. A worker with `provider_done_at` set is free for new jobs and no longer shares location.
+
 Transitions are role-gated via `ALLOWED_TRANSITIONS` in `bookings/bookings_service.py` and written with `update_status(..., expected_status=...)` so concurrent requests can't overwrite each other. Door OTP is 4 digits.
 
 ## Key env vars
