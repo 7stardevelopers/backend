@@ -7,6 +7,7 @@
 --   payments.plan_id        the plan a SUBSCRIPTION payment buys (booking_id is NULL then)
 --   payments.paid_at        when the payment was confirmed (verify or webhook)
 --   bookings.earning_credited_at  worker's share credited to their wallet (once, on completion)
+--   bookings.subscription_id      plan whose quota the booking used (given back only then on cancel)
 -- All amounts stay in paise.
 
 DROP PROCEDURE IF EXISTS _add_column;
@@ -29,6 +30,7 @@ CALL _add_column('payments', 'purpose',  "VARCHAR(20) NOT NULL DEFAULT 'BOOKING'
 CALL _add_column('payments', 'plan_id',  'CHAR(36) NULL');
 CALL _add_column('payments', 'paid_at',  'TIMESTAMP NULL');
 CALL _add_column('bookings', 'earning_credited_at', 'TIMESTAMP NULL');
+CALL _add_column('bookings', 'subscription_id', 'CHAR(36) NULL');   -- plan quota this booking used
 
 DROP PROCEDURE IF EXISTS _add_column;
 
@@ -45,8 +47,10 @@ WHERE b.earning_credited_at IS NULL
 
 -- Fill the platform fee for bookings created before it was stored (10% default;
 -- edit the 10 if PLATFORM_FEE_PCT differs in this environment).
-UPDATE bookings SET platform_fee = FLOOR(total_amount * 10 / 100), updated_at = updated_at
-WHERE (platform_fee IS NULL OR platform_fee = 0) AND total_amount > 0;
+-- Worker share is on the pre-discount price (sub_total); promos are platform-funded.
+UPDATE bookings SET platform_fee = FLOOR(COALESCE(NULLIF(sub_total, 0), total_amount) * 10 / 100),
+                    updated_at = updated_at
+WHERE (platform_fee IS NULL OR platform_fee = 0) AND COALESCE(NULLIF(sub_total, 0), total_amount) > 0;
 
 -- Refunds made before refund_amount was tracked were always full refunds.
 UPDATE payments SET refund_amount = amount

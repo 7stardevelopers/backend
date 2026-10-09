@@ -14,23 +14,25 @@ load_secrets()
 
 
 def handler(event, context):
-    try:
-        with get_connection() as conn:
-            _process_upcoming_bookings(conn)
-        with get_connection() as conn:
-            from bookings.live_tracking import nudge_stale_trackers
-            nudge_stale_trackers(conn)
-        with get_connection() as conn:
-            from bookings.completion_reminders import remind_unconfirmed
-            remind_unconfirmed(conn)
-        with get_connection() as conn:
-            from bookings.unpaid_expiry import expire_unpaid
-            expire_unpaid(conn)
-        return {"statusCode": 200, "body": "OK"}
-    except Exception as e:
-        print(f"[LocationTrigger] Error: {e}")
-        traceback.print_exc()
-        return {"statusCode": 500, "body": str(e)}
+    # Each step in its own transaction and try: one failing must not stop the
+    # others (e.g. unpaid-booking expiry releasing coupons/coins/quota).
+    failed = []
+    for name, step in (
+        ("upcoming", lambda conn: _process_upcoming_bookings(conn)),
+        ("stale_trackers", lambda conn: __import__("bookings.live_tracking", fromlist=["x"]).nudge_stale_trackers(conn)),
+        ("completion_reminders", lambda conn: __import__("bookings.completion_reminders", fromlist=["x"]).remind_unconfirmed(conn)),
+        ("unpaid_expiry", lambda conn: __import__("bookings.unpaid_expiry", fromlist=["x"]).expire_unpaid(conn)),
+    ):
+        try:
+            with get_connection() as conn:
+                step(conn)
+        except Exception as e:
+            failed.append(name)
+            print(f"[LocationTrigger] {name} failed: {e}")
+            traceback.print_exc()
+    if failed:
+        return {"statusCode": 500, "body": f"Failed: {', '.join(failed)}"}
+    return {"statusCode": 200, "body": "OK"}
 
 
 def _process_upcoming_bookings(conn):

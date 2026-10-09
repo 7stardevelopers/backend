@@ -1,10 +1,5 @@
 import hmac
-<<<<<<< HEAD
 import json
-import os
-import razorpay
-=======
->>>>>>> f42a2ddc30334fb4703d1d583b930d0dacc4a83d
 from datetime import datetime, timezone
 from sqlalchemy import text
 
@@ -97,7 +92,9 @@ class BookingsService:
             "sub_total": pricing["sub_total"],
             "discount": pricing["discount"],
             "total_amount": pricing["total_amount"],
-            "platform_fee": platform_fee_for(pricing["total_amount"]),
+            "platform_fee": platform_fee_for(pricing["sub_total"]),
+            # Which plan quota this booking used — only that is given back on cancel.
+            "subscription_id": pricing["subscription"]["subscription_id"] if pricing["subscription"] else None,
             "coupon_id": validated.coupon_id if pricing["coupon"] else None,
             "is_instant": validated.is_instant,
             "customer_notes": validated.customer_notes,
@@ -452,14 +449,9 @@ class BookingsService:
             self._hide_door_otp(updated, role)
             return "success", updated
         updated = self.modal.update_status(connection, booking_id, new_status, expected_status=booking["status"])
-<<<<<<< HEAD
-        if new_status == "COMPLETED":
-            self._credit_earning(connection, updated)
-=======
         if new_status == "COMPLETED":  # admin force-complete
             from payments.payment_service import PaymentService
             PaymentService().credit_provider_for_booking(connection, booking_id)
->>>>>>> f42a2ddc30334fb4703d1d583b930d0dacc4a83d
         self._notify_status_change(connection, updated, new_status)
         self._hide_door_otp(updated, role)
         return "success", updated
@@ -558,29 +550,10 @@ class BookingsService:
         from payments.payment_service import PaymentService
         PaymentService().credit_provider_for_booking(connection, booking_id)
         booking = self.modal.read_one(connection, booking_id)
-        self._credit_earning(connection, booking)
         self._notify_status_change(connection, booking, "COMPLETED")
         self._push(connection, [self._provider_user_id(connection, booking)],
                    "Job completed", "Both sides confirmed. Your earnings are updated.",
                    {"type": "booking_update", "booking_id": booking_id, "status": "COMPLETED"})
-
-    @staticmethod
-    def _credit_earning(connection, booking):
-        # Payment is taken before a worker is assigned, so the worker's share
-        # is credited here, once, when the job is actually done.
-        if booking.get("payment_status") != "PAID" or not booking.get("provider_id"):
-            return
-        pay_modal = PaymentMaster()
-        if pay_modal.has_earning(connection, booking["booking_id"]):
-            return
-        payment = pay_modal.find_payment(connection, payment_id=booking.get("payment_id")) if booking.get("payment_id") else None
-        total = int((payment or {}).get("amount") or booking.get("total_amount") or 0)
-        if total <= 0:
-            return
-        from payments.payment_service import PLATFORM_FEE_PCT
-        earning = total - int(total * PLATFORM_FEE_PCT / 100)
-        pay_modal.add_earning(connection, booking["provider_id"], booking["booking_id"], earning)
-        ProvidersMaster().update_wallet(connection, booking["provider_id"], earning)
 
     @staticmethod
     def _provider_user_id(connection, booking):
@@ -607,10 +580,10 @@ class BookingsService:
             raise ValueError(f"Cannot cancel booking in {booking['status']} status")
         return "success", self._do_cancel(connection, booking)
 
-    def _do_cancel(self, connection, booking):
+    def _do_cancel(self, connection, booking, only_unpaid=False):
         booking_id = booking["booking_id"]
         updated = self.modal.update_status(
-            connection, booking_id, "CANCELLED", expected_status=booking["status"]
+            connection, booking_id, "CANCELLED", expected_status=booking["status"], only_unpaid=only_unpaid
         )
         release_booking_side_effects(connection, booking)
         self._notify_status_change(connection, updated, "CANCELLED")

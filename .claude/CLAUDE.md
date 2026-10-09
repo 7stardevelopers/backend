@@ -96,12 +96,9 @@ In Lambda: `env_loader.load_secrets()` fetches JSON from AWS Secrets Manager (`S
 Uses Expo Push API (`https://exp.host/--/api/v2/push/send`). Tokens must start with `ExponentPushToken[`. Push is always non-fatal (wrapped in try/except). Also writes to `in_app_notifications` table (even for users with no push token). WebSocket pushes go through `utilities/ws_push.py`, which deletes stale connections on `GoneException`.
 
 ### Payment flow
-<<<<<<< HEAD
-Razorpay: `POST /bookings` (stays PENDING, hidden from workers) → `POST /payments/create-order` → client completes payment → `POST /payments/verify` (HMAC signature check, idempotent) → `BookingsService.dispatch` pushes "New Job" to nearby workers. Workers can list/view/claim a PENDING booking only when it is `PAID` or `total_amount = 0` (`is_dispatchable`; ₹0 bookings dispatch at creation). Unpaid bookings are cancelled after `UNPAID_BOOKING_TTL_MIN` (default 15) by `bookings/unpaid_expiry.py` (run from `location_trigger`); a verify arriving after that refunds. Provider earnings (`total - PLATFORM_FEE_PCT %`, default 10%) are credited once when the job reaches COMPLETED (`_credit_earning`), not at payment time.
-=======
 All money is integer **paise** (₹499 = `49900`) in the DB and API; the apps convert at the boundary. Coins are a count (1 coin = ₹1 = 100 paise, `booking_pricing.COIN_VALUE_PAISE`).
 
-Razorpay (`payments/payment_service.py`, `migrations/005_payment_hardening.sql`):
+Razorpay (`payments/payment_service.py`, `migrations/005_payment_hardening.sql`). **Pay first:** `POST /bookings` stays PENDING and hidden from workers; once paid, `confirm_payment` calls `BookingsService.dispatch` (list + "New Job" push). Workers can list/view/claim a PENDING booking only when it is `PAID` or `total_amount = 0` (`is_dispatchable`; ₹0 bookings dispatch at creation). Unpaid bookings are cancelled after `UNPAID_BOOKING_TTL_MIN` (default 15) by `bookings/unpaid_expiry.py` (run from `location_trigger`); a payment confirmed after that is refunded.
 - `POST /payments/create-order {booking_id}` or `{plan_id}` → amount from the DB, always INR; an unpaid order for the same thing is reused. Paid/cancelled bookings and an already-active plan are refused.
 - `POST /payments/verify` (app callback) and `POST /payments/webhook` (public, HMAC of the raw body with `RAZORPAY_WEBHOOK_SECRET`; events `payment.authorized/captured`, `order.paid`, `payment.failed`, `refund.failed`) both go through `confirm_payment`, which is idempotent (`PaymentMaster.mark_paid` / `BookingsMaster.mark_paid` are conditional updates). Authorized payments are captured in code. A second payment for an already-paid or cancelled booking is refunded automatically.
 - Paid subscription plans activate only through a SUBSCRIPTION payment; `POST /subscriptions/subscribe` works for free plans only.
@@ -109,7 +106,6 @@ Razorpay (`payments/payment_service.py`, `migrations/005_payment_hardening.sql`)
 - Every cancel path (`_do_cancel`, incl. admin) refunds the online payment and claws back any credited earning as a `DEDUCTION` row. `POST /payments/refund {payment_id|booking_id, amount?}` (admin/support) refunds partially or fully; a Razorpay failure flags the payment `REFUND_FAILED`.
 - Payment statuses: `PENDING | PAID | FAILED | PARTIALLY_REFUNDED | REFUNDED | REFUND_FAILED`.
 - `RAZORPAY_KEY_ID/SECRET` missing → payments fail closed (`PaymentsNotConfigured`), never accept unsigned data.
->>>>>>> f42a2ddc30334fb4703d1d583b930d0dacc4a83d
 
 ### Booking pricing
 All amounts are computed server-side in `bookings/booking_pricing.py` from `services.base_price` / `sub_services.price`; client `sub_total`/`discount`/`total_amount` are ignored. Coupon, subscription quota and coins are applied (and reserved atomically) inside booking creation.

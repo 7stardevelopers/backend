@@ -1,4 +1,5 @@
 """A booking reaches workers only after it is paid (or costs nothing)."""
+import os
 import unittest
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -11,6 +12,9 @@ from payments.payment_service import PaymentService
 
 class PaymentGatingTests(unittest.TestCase):
     def setUp(self):
+        env = patch.dict(os.environ, {"RAZORPAY_KEY_ID": "rzp_test_x", "RAZORPAY_KEY_SECRET": "s"})
+        env.start()
+        self.addCleanup(env.stop)
         self.conn = make_db()
         self.addCleanup(self.conn.close)
         insert(self.conn, "users", user_id="cust", role="CUSTOMER")
@@ -63,18 +67,22 @@ class PaymentGatingTests(unittest.TestCase):
     def test_verify_on_cancelled_booking_refunds_and_does_not_dispatch(self):
         self.svc.modal.update_status(self.conn, "b1", "CANCELLED")
         client = MagicMock()
+        client.payment.fetch.return_value = {"amount": 49900, "status": "captured", "method": "upi"}
         with patch("bookings.bookings_service.BookingsService.dispatch") as dispatch, \
              patch("payments.payment_service._get_razorpay_client", return_value=client):
             out = self.verify()
         dispatch.assert_not_called()
         self.assertTrue(out["refunded"])
-        client.payment.refund.assert_called_once_with("pay_rz_1", {"amount": 49900})
+        client.payment.refund.assert_called_once()
+        rz_id, body = client.payment.refund.call_args.args
+        self.assertEqual((rz_id, body["amount"]), ("pay_rz_1", 49900))
 
     def test_earning_credited_once_on_completion(self):
         self.verify_without_dispatch()
         self.svc.modal.claim_booking(self.conn, "b1", "p1")
-        self.svc._credit_earning(self.conn, self.booking())
-        self.svc._credit_earning(self.conn, self.booking())
+        self.svc.modal.update_status(self.conn, "b1", "COMPLETED")
+        self.pay.credit_provider_for_booking(self.conn, "b1")
+        self.pay.credit_provider_for_booking(self.conn, "b1")
         wallet = self.conn.exec_driver_sql("SELECT wallet_balance FROM providers WHERE provider_id='p1'").scalar()
         self.assertEqual(wallet, 49900 - 4990)
 
@@ -91,6 +99,13 @@ class PaymentGatingTests(unittest.TestCase):
              patch("bookings.bookings_service.release_booking_side_effects"):
             expire_unpaid(self.conn)
         self.assertEqual(self.booking()["status"], "CANCELLED")
+
+    def test_expiry_never_cancels_a_booking_paid_meanwhile(self):
+        stale = self.booking()                       # expiry read it as unpaid…
+        self.verify_without_dispatch()               # …then the payment landed
+        with self.assertRaises(ValueError):
+            self.svc._do_cancel(self.conn, stale, only_unpaid=True)
+        self.assertEqual(self.booking()["status"], "PENDING")
 
     def test_paid_booking_never_expires(self):
         self.verify_without_dispatch()
