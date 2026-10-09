@@ -17,7 +17,8 @@ class FinanceMaster:
         return get_table("provider_earnings")
 
     def get_overview(self, conn) -> dict:
-        gmv = conn.execute(text("SELECT COALESCE(SUM(amount),0) FROM payments WHERE status='PAID'")).scalar()
+        gmv = conn.execute(text("SELECT COALESCE(SUM(amount - COALESCE(refund_amount,0)),0) FROM payments "
+                         "WHERE status IN ('PAID','PARTIALLY_REFUNDED','REFUND_FAILED')")).scalar()
         platform_fee_pct = float(os.environ.get("PLATFORM_FEE_PCT", "10"))
         platform_fees = int((gmv or 0) * platform_fee_pct / 100)
         total_payouts = conn.execute(text("SELECT COALESCE(SUM(amount),0) FROM payout_requests WHERE status='PROCESSED'")).scalar()

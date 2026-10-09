@@ -47,7 +47,7 @@ CREATE TABLE wallet_ledger (
 );
 CREATE TABLE providers (
     provider_id TEXT PRIMARY KEY, user_id TEXT, status TEXT DEFAULT 'APPROVED',
-    avg_rating REAL DEFAULT 0, created_at TIMESTAMP
+    avg_rating REAL DEFAULT 0, wallet_balance INTEGER DEFAULT 0, created_at TIMESTAMP
 );
 CREATE TABLE provider_locations (
     provider_id TEXT PRIMARY KEY, lat REAL, lng REAL, updated_at TIMESTAMP
@@ -73,7 +73,24 @@ CREATE TABLE bookings (
     scheduled_at TIMESTAMP, service_snapshot JSON, address_snapshot JSON, proof_photos JSON,
     provider_done_at TIMESTAMP, customer_done_at TIMESTAMP, completion_disputed_at TIMESTAMP,
     identity_confirmed_at TIMESTAMP, identity_mismatch_at TIMESTAMP,
+    sub_total INTEGER DEFAULT 0, discount INTEGER DEFAULT 0, total_amount INTEGER DEFAULT 0,
+    platform_fee INTEGER DEFAULT 0, payment_status TEXT DEFAULT 'PENDING', payment_id TEXT,
+    earning_credited_at TIMESTAMP, coupon_id TEXT,
     updated_at TIMESTAMP, created_at TIMESTAMP
+);
+CREATE TABLE payments (
+    payment_id TEXT PRIMARY KEY, booking_id TEXT, customer_id TEXT, razorpay_order_id TEXT UNIQUE,
+    razorpay_payment_id TEXT UNIQUE, amount INTEGER, currency TEXT DEFAULT 'INR',
+    status TEXT DEFAULT 'PENDING', payment_method TEXT, refund_id TEXT, refund_amount INTEGER DEFAULT 0,
+    purpose TEXT DEFAULT 'BOOKING', plan_id TEXT, paid_at TIMESTAMP, created_at TIMESTAMP
+);
+CREATE TABLE provider_earnings (
+    earning_id TEXT PRIMARY KEY, provider_id TEXT, booking_id TEXT, amount INTEGER, type TEXT,
+    created_at TIMESTAMP
+);
+CREATE TABLE payout_requests (
+    payout_id TEXT PRIMARY KEY, provider_id TEXT, amount INTEGER, status TEXT DEFAULT 'PENDING',
+    bank_account TEXT, bank_ifsc TEXT, processed_at TIMESTAMP, notes TEXT, created_at TIMESTAMP
 );
 CREATE TABLE support_tickets (
     ticket_id TEXT PRIMARY KEY, user_id TEXT, subject TEXT, category TEXT, booking_id TEXT,

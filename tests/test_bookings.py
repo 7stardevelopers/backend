@@ -45,7 +45,8 @@ class PricingTests(unittest.TestCase):
 
     def test_coins_reduce_total_and_are_capped(self):
         p = price_booking(self.conn, "c1", "s1", coins_used=100)
-        self.assertEqual((p["coins_used"], p["total_amount"]), (100, 49800))
+        # 1 coin = ₹1 = 100 paise
+        self.assertEqual((p["coins_used"], p["total_amount"]), (100, 39900))
         with self.assertRaises(ValueError):
             price_booking(self.conn, "c1", "s1", coins_used=101)
 

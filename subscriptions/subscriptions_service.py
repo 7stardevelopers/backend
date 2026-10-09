@@ -21,7 +21,11 @@ class SubscriptionsService:
         plan = self.modal.get_plan(connection, data.plan_id)
         if not plan:
             raise ValueError("Plan not found")
-        sub = self.modal.create_subscription(connection, user_id, data.plan_id, data.payment_id)
+        if int(plan.get("price") or 0) > 0:
+            # Paid plans activate only via POST /payments/create-order {plan_id} → /payments/verify
+            # (or the Razorpay webhook). A client-sent payment_id proves nothing.
+            raise ValueError("Please pay for this plan to activate it")
+        sub = self.modal.create_subscription(connection, user_id, data.plan_id, None)
         return "created", {**sub, "plan": plan}
 
     def get_mine(self, obj, connection):

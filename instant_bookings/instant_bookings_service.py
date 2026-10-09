@@ -1,3 +1,4 @@
+from payments.payment_service import platform_fee_for
 from datetime import datetime, timedelta, timezone
 
 from bookings.booking_pricing import price_booking
@@ -51,6 +52,7 @@ class InstantBookingsService:
             "sub_total": sub_total,
             "discount": 0,
             "total_amount": sub_total,
+            "platform_fee": platform_fee_for(sub_total),
             "is_instant": True,
             "customer_notes": data.customer_notes,
             "status": "PENDING",

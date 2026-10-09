@@ -17,9 +17,17 @@ def parse_request(event):
     query = event.get("queryStringParameters") or {}
     body.update({k: v for k, v in query.items() if k not in body})
 
-    user_id, role = _extract_jwt(headers)
+    user_id, role = _extract_jwt(headers) if not raw_path.rstrip("/").endswith("/payments/webhook") else (None, None)
 
-    return {"method": method, "path": path, "body": body, "user_id": user_id, "role": role}
+    req = {"method": method, "path": path, "body": body, "user_id": user_id, "role": role}
+    if path == "/payments/webhook":
+        # Razorpay signs the exact bytes it sent — keep them for the HMAC check.
+        raw = event.get("body") or ""
+        if event.get("isBase64Encoded") and raw:
+            raw = base64.b64decode(raw).decode("utf-8")
+        req["raw_body"] = raw
+        req["rzp_signature"] = _header(headers, "x-razorpay-signature")
+    return req
 
 
 def _header(headers, name):

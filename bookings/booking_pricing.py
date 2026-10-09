@@ -7,8 +7,8 @@ Order of application (mirrors Customer app create.jsx):
   sub_total  = Σ sub_service.price × qty   (or services.base_price when no items)
   coupon     → discount off sub_total
   subscription discount_pct → off sub_total (only while bookings_included remain)
-  coins      → capped at what's left
-  total      = sub_total − coupon − subscription − coins   (never below 0)
+  coins      → 1 coin = ₹1 (100 paise), capped at what's left
+  total      = sub_total − coupon − subscription − coins×100   (never below 0, paise)
 """
 from datetime import datetime, timezone
 from sqlalchemy import text
@@ -18,6 +18,8 @@ from subscriptions.subscriptions_modal import SubscriptionsMaster
 from utilities.db_connection import get_table
 
 MAX_ITEM_QTY = 20
+# Amounts are paise. One coin (referral bonus etc.) is worth ₹1.
+COIN_VALUE_PAISE = 100
 
 
 def price_booking(conn, user_id: str, service_id: str, items=None, coupon_id=None, coins_used=0) -> dict:
@@ -64,13 +66,13 @@ def price_booking(conn, user_id: str, service_id: str, items=None, coupon_id=Non
         balance = ReferralsMaster().get_balance(conn, user_id)
         if coins_used > balance:
             raise ValueError("You don't have enough coins for this redemption")
-        coins = min(int(coins_used), after_discount)
+        coins = min(int(coins_used), after_discount // COIN_VALUE_PAISE)
 
     return {
         "sub_total": sub_total,
         "discount": discount,
         "coins_used": coins,
-        "total_amount": max(0, after_discount - coins),
+        "total_amount": max(0, after_discount - coins * COIN_VALUE_PAISE),
         "items": priced_items,
         "coupon": coupon,
         "subscription": subscription,
