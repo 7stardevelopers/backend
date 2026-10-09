@@ -160,16 +160,11 @@ with patch('utilities.db_connection.get_engine'):
         assert called_amount == 59900, f'Expected 59900, got {called_amount}'
         print('Day 4 - create_order uses DB amount (ignores app value): PASS')
 
-    fake_pmt = {'payment_id': 'p2', 'amount': 59900, 'razorpay_payment_id': None}
-    fake_bk2 = {'booking_id': 'b1', 'customer_id': 'cust1', 'provider_id': 'prov1'}
-    with patch.object(pay_svc.modal, 'find_payment', return_value=fake_pmt), \
-         patch.object(pay_svc.modal, 'update_payment'), \
-         patch.object(pay_svc.modal, 'add_earning'), \
-         patch.object(pay_svc.booking_modal, 'read_one', return_value=fake_bk2), \
-         patch.object(pay_svc.booking_modal, 'update_payment'), \
-         patch.object(pay_svc.provider_modal, 'update_wallet'), \
-         patch.object(pay_svc.notif, 'send_push') as mock_push, \
-         patch('payments.payment_service._verify_signature', return_value=True):
+    fake_pmt = {'payment_id': 'p2', 'amount': 59900, 'razorpay_payment_id': None,
+                'customer_id': 'cust1', 'booking_id': 'b1', 'status': 'PENDING'}
+    fake_bk2 = {'booking_id': 'b1', 'customer_id': 'cust1', 'provider_id': None,
+                'status': 'PENDING', 'payment_status': 'PAID', 'total_amount': 59900}
+    with patch.object(pay_svc.modal, 'find_payment', return_value=fake_pmt),          patch.object(pay_svc.modal, 'update_payment'),          patch.object(pay_svc.booking_modal, 'read_one', return_value=fake_bk2),          patch.object(pay_svc.booking_modal, 'update_payment') as mock_bk_paid,          patch('bookings.bookings_service.BookingsService.dispatch') as mock_dispatch,          patch('payments.payment_service._verify_signature', return_value=True):
         status, data = pay_svc.verify_payment(
             {'_user_id': 'cust1', '_role': 'CUSTOMER',
              'razorpay_order_id': 'ord1', 'razorpay_payment_id': 'pay1',
@@ -177,10 +172,9 @@ with patch('utilities.db_connection.get_engine'):
             MagicMock(),
         )
         assert status == 'success'
-        assert mock_push.called
-        notify_ids = mock_push.call_args[1]['user_ids']
-        assert 'cust1' in notify_ids and 'prov1' in notify_ids
-        print('Day 4 - verify_payment: PAID + earnings + push to both parties: PASS')
+        mock_bk_paid.assert_called_once()
+        assert mock_dispatch.call_count == 1, 'job must be sent to workers only after payment'
+        print('Day 4 - verify_payment: PAID + dispatch to workers: PASS')
 
     # ─── Day 5: Routes registered ─────────────────────────────────────────
     from routing import ROUTES

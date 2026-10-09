@@ -1,4 +1,5 @@
 import hmac
+import json
 import os
 import razorpay
 from datetime import datetime, timezone
@@ -105,23 +106,35 @@ class BookingsService:
         if pricing["items"]:
             self.modal.create_items(connection, booking["booking_id"], pricing["items"])
 
+        # Workers only see a job once it is paid; a fully covered (₹0) booking
+        # has nothing to pay, so it goes out right away. Otherwise dispatch()
+        # runs from PaymentService.verify_payment.
+        if is_dispatchable(booking):
+            booking = self.dispatch(connection, booking)
+
+        booking["coins_used"] = pricing["coins_used"]
+        self._hide_door_otp(booking, role)
+        return "created", booking
+
+    def dispatch(self, connection, booking):
+        """Offer a paid (or ₹0) PENDING booking to workers and confirm it to the customer."""
         # "Book again" — try to directly assign the requested provider if
         # they're approved, currently online, and still offer this service.
         # Falls back to the normal broadcast-to-nearby-providers flow below.
         direct_assigned = False
-        if validated.requested_provider_id:
+        if booking.get("requested_provider_id"):
             try:
-                prov = ProvidersMaster().find_by_id(connection, validated.requested_provider_id)
+                prov = ProvidersMaster().find_by_id(connection, booking.get("requested_provider_id"))
                 if prov and prov.get("status") == "APPROVED" and prov.get("is_available"):
                     ps_t = get_table("provider_services")
                     offers_service = connection.execute(
                         ps_t.select()
-                        .where(ps_t.c.provider_id == validated.requested_provider_id)
-                        .where(ps_t.c.service_id == validated.service_id)
+                        .where(ps_t.c.provider_id == booking.get("requested_provider_id"))
+                        .where(ps_t.c.service_id == booking["service_id"])
                     ).fetchone()
                     if offers_service:
                         direct_assigned = self.modal.claim_booking(
-                            connection, booking["booking_id"], validated.requested_provider_id
+                            connection, booking["booking_id"], booking.get("requested_provider_id")
                         )
                         if direct_assigned:
                             booking = self.modal.read_one(connection, booking["booking_id"])
@@ -141,6 +154,8 @@ class BookingsService:
             try:
                 from providers.provider_matching import haversine
                 addr = booking.get("address_snapshot") or {}
+                if isinstance(addr, str):  # re-read from the DB (verify_payment path)
+                    addr = json.loads(addr)
                 b_lat = addr.get("lat")
                 b_lng = addr.get("lng")
                 candidates = ProvidersMaster().get_available_for_service(connection, booking["service_id"])
@@ -166,14 +181,12 @@ class BookingsService:
 
         self.notif.send_push(
             connection=connection,
-            user_ids=[user_id],
+            user_ids=[booking["customer_id"]],
             title="Booking confirmed!",
             body="We're finding the best expert for you.",
             data={"type": "booking_confirmed", "booking_id": booking["booking_id"]},
         )
-        booking["coins_used"] = pricing["coins_used"]
-        self._hide_door_otp(booking, role)
-        return "created", booking
+        return booking
 
     def list_mine(self, obj, connection):
         user_id = obj.pop("_user_id")
@@ -220,7 +233,8 @@ class BookingsService:
                 prov = ProvidersMaster().find_by_user_id(connection, user_id)
                 if prov and str(prov["provider_id"]) == str(booking["provider_id"]):
                     is_provider = True
-            elif role == "PROVIDER" and booking.get("status") == "PENDING" and _is_approved_provider(connection, user_id):
+            elif role == "PROVIDER" and booking.get("status") == "PENDING" and is_dispatchable(booking) \
+                    and _is_approved_provider(connection, user_id):
                 # Unclaimed broadcast job — any provider may view it before
                 # deciding to accept (offering the service is checked by
                 # get_available_for_provider; this just allows the detail
@@ -434,6 +448,8 @@ class BookingsService:
             self._hide_door_otp(updated, role)
             return "success", updated
         updated = self.modal.update_status(connection, booking_id, new_status, expected_status=booking["status"])
+        if new_status == "COMPLETED":
+            self._credit_earning(connection, updated)
         self._notify_status_change(connection, updated, new_status)
         self._hide_door_otp(updated, role)
         return "success", updated
@@ -530,10 +546,29 @@ class BookingsService:
 
     def _on_completed(self, connection, booking_id):
         booking = self.modal.read_one(connection, booking_id)
+        self._credit_earning(connection, booking)
         self._notify_status_change(connection, booking, "COMPLETED")
         self._push(connection, [self._provider_user_id(connection, booking)],
                    "Job completed", "Both sides confirmed. Your earnings are updated.",
                    {"type": "booking_update", "booking_id": booking_id, "status": "COMPLETED"})
+
+    @staticmethod
+    def _credit_earning(connection, booking):
+        # Payment is taken before a worker is assigned, so the worker's share
+        # is credited here, once, when the job is actually done.
+        if booking.get("payment_status") != "PAID" or not booking.get("provider_id"):
+            return
+        pay_modal = PaymentMaster()
+        if pay_modal.has_earning(connection, booking["booking_id"]):
+            return
+        payment = pay_modal.find_payment(connection, payment_id=booking.get("payment_id")) if booking.get("payment_id") else None
+        total = int((payment or {}).get("amount") or booking.get("total_amount") or 0)
+        if total <= 0:
+            return
+        from payments.payment_service import PLATFORM_FEE_PCT
+        earning = total - int(total * PLATFORM_FEE_PCT / 100)
+        pay_modal.add_earning(connection, booking["provider_id"], booking["booking_id"], earning)
+        ProvidersMaster().update_wallet(connection, booking["provider_id"], earning)
 
     @staticmethod
     def _provider_user_id(connection, booking):
@@ -729,6 +764,11 @@ class BookingsService:
                 )
             except Exception as e:
                 print(f"[Notify] Status notification failed (non-fatal): {e}")
+
+
+def is_dispatchable(booking) -> bool:
+    """A PENDING booking may be shown to workers only once it is paid or costs nothing."""
+    return booking.get("payment_status") == "PAID" or int(booking.get("total_amount") or 0) == 0
 
 
 def _is_approved_provider(connection, user_id) -> bool:

@@ -96,7 +96,7 @@ In Lambda: `env_loader.load_secrets()` fetches JSON from AWS Secrets Manager (`S
 Uses Expo Push API (`https://exp.host/--/api/v2/push/send`). Tokens must start with `ExponentPushToken[`. Push is always non-fatal (wrapped in try/except). Also writes to `in_app_notifications` table (even for users with no push token). WebSocket pushes go through `utilities/ws_push.py`, which deletes stale connections on `GoneException`.
 
 ### Payment flow
-Razorpay: `POST /payments/create-order` → client completes payment → `POST /payments/verify` (HMAC signature check). Platform fee applied on verify: `PLATFORM_FEE_PCT` % (default 10%) deducted from provider earnings.
+Razorpay: `POST /bookings` (stays PENDING, hidden from workers) → `POST /payments/create-order` → client completes payment → `POST /payments/verify` (HMAC signature check, idempotent) → `BookingsService.dispatch` pushes "New Job" to nearby workers. Workers can list/view/claim a PENDING booking only when it is `PAID` or `total_amount = 0` (`is_dispatchable`; ₹0 bookings dispatch at creation). Unpaid bookings are cancelled after `UNPAID_BOOKING_TTL_MIN` (default 15) by `bookings/unpaid_expiry.py` (run from `location_trigger`); a verify arriving after that refunds. Provider earnings (`total - PLATFORM_FEE_PCT %`, default 10%) are credited once when the job reaches COMPLETED (`_credit_earning`), not at payment time.
 
 ### Booking pricing
 All amounts are computed server-side in `bookings/booking_pricing.py` from `services.base_price` / `sub_services.price`; client `sub_total`/`discount`/`total_amount` are ignored. Coupon, subscription quota and coins are applied (and reserved atomically) inside booking creation.

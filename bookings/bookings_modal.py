@@ -210,6 +210,8 @@ class BookingsMaster:
             LEFT JOIN user_addresses ua ON ua.address_id = b.address_id
             WHERE b.status = 'PENDING'
               AND b.provider_id IS NULL
+              -- only paid (or fully covered) jobs reach workers
+              AND (b.payment_status = 'PAID' OR b.total_amount = 0)
               AND ps.provider_id = :pid
               -- never offer a worker their own bookings (made before they registered)
               AND b.customer_id <> (SELECT user_id FROM providers WHERE provider_id = :pid)
@@ -306,6 +308,7 @@ class BookingsMaster:
             .where(self.t.c.booking_id == booking_id)
             .where(self.t.c.status == "PENDING")
             .where(self.t.c.provider_id == None)
+            .where(or_(self.t.c.payment_status == "PAID", self.t.c.total_amount == 0))
             .values(provider_id=provider_id, status="ACCEPTED", updated_at=now_utc())
         )
         return result.rowcount > 0

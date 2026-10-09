@@ -56,6 +56,14 @@ class PaymentMaster:
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
+    def has_earning(self, conn, booking_id: str, earning_type: str = "BOOKING") -> bool:
+        row = conn.execute(
+            self.earnings.select()
+            .where(self.earnings.c.booking_id == booking_id)
+            .where(self.earnings.c.type == earning_type)
+        ).fetchone()
+        return row is not None
+
     def add_earning(self, conn, provider_id: str, booking_id: str, amount: int, earning_type: str = "BOOKING"):
         conn.execute(self.earnings.insert().values(
             earning_id=new_uuid(),

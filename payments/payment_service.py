@@ -40,6 +40,10 @@ class PaymentService:
         booking = self.booking_modal.read_one(connection, data.booking_id)
         if str(booking["customer_id"]) != str(user_id):
             raise PermissionError("Access denied")
+        if booking.get("payment_status") == "PAID":
+            raise ValueError("This booking is already paid")
+        if booking["status"] == "CANCELLED":
+            raise ValueError("This booking was cancelled — please book again")
 
         amount = booking["total_amount"]
         client = _get_razorpay_client()
@@ -81,33 +85,35 @@ class PaymentService:
         if str(payment["booking_id"]) != str(data.booking_id):
             raise ValueError("Booking does not match this payment order")
 
+        # The app may retry verify (flaky network); only the first call acts.
+        if payment["status"] == "PAID":
+            return "success", {"message": "Payment verified", "payment_id": payment["payment_id"]}
+
         self.modal.update_payment(connection, payment["payment_id"], {
             "razorpay_payment_id": data.razorpay_payment_id,
             "status": "PAID",
         })
         self.booking_modal.update_payment(connection, data.booking_id, payment["payment_id"], "PAID")
-
         booking = self.booking_modal.read_one(connection, data.booking_id)
-        if booking.get("provider_id"):
-            total = payment["amount"]
-            fee = int(total * PLATFORM_FEE_PCT / 100)
-            provider_earning = total - fee
-            self.modal.add_earning(connection, booking["provider_id"], data.booking_id, provider_earning)
-            self.provider_modal.update_wallet(connection, booking["provider_id"], provider_earning)
 
-        try:
-            notify_ids = [str(booking["customer_id"])]
-            if booking.get("provider_id"):
-                notify_ids.append(str(booking["provider_id"]))
-            self.notif.send_push(
-                connection=connection,
-                user_ids=notify_ids,
-                title="Payment Confirmed",
-                body="Your payment has been received. Your booking is confirmed.",
-                data={"type": "payment_confirmed", "booking_id": data.booking_id},
-            )
-        except Exception as e:
-            print(f"[Payment] Push notification failed (non-fatal): {e}")
+        from bookings.bookings_service import BookingsService
+        if booking["status"] == "CANCELLED":
+            # Cancelled (by the customer or the unpaid-booking expiry) while
+            # the payment was in flight — give the money straight back.
+            try:
+                _get_razorpay_client().payment.refund(data.razorpay_payment_id, {"amount": payment["amount"]})
+                self.modal.update_payment(connection, payment["payment_id"], {"status": "REFUNDED"})
+            except Exception as e:
+                print(f"[Payment] Refund for cancelled booking failed (non-fatal): {e}")
+            return "success", {"message": "Booking was cancelled — payment refunded",
+                               "payment_id": payment["payment_id"], "refunded": True}
+
+        # Only now does the job reach workers (list + "New Job" push).
+        if booking["status"] == "PENDING" and not booking.get("provider_id"):
+            try:
+                BookingsService().dispatch(connection, booking)
+            except Exception as e:
+                print(f"[Payment] Dispatch after payment failed (non-fatal): {e}")
 
         return "success", {"message": "Payment verified", "payment_id": payment["payment_id"]}
 
