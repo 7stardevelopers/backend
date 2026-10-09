@@ -34,7 +34,8 @@ class AdminMaster:
         total_bookings = conn.execute(text("SELECT COUNT(*) FROM bookings")).scalar()
         pending_bookings = conn.execute(text("SELECT COUNT(*) FROM bookings WHERE status='PENDING'")).scalar()
         today_bookings = conn.execute(text("SELECT COUNT(*) FROM bookings WHERE DATE(created_at) = CURRENT_DATE")).scalar()
-        total_revenue = conn.execute(text("SELECT COALESCE(SUM(amount),0) FROM payments WHERE status='PAID'")).scalar()
+        total_revenue = conn.execute(text("SELECT COALESCE(SUM(amount - COALESCE(refund_amount,0)),0) FROM payments "
+                         "WHERE status IN ('PAID','PARTIALLY_REFUNDED','REFUND_FAILED')")).scalar()
         pending_providers = conn.execute(text("SELECT COUNT(*) FROM providers WHERE status='PENDING'")).scalar()
         return {
             "total_customers": int(total_users or 0),
@@ -82,7 +83,8 @@ class AdminMaster:
             "completed_bookings":         _count("SELECT COUNT(*) FROM bookings WHERE status='COMPLETED'"),
             "cancelled_bookings":         _count("SELECT COUNT(*) FROM bookings WHERE status='CANCELLED'"),
             "today_bookings":             _count("SELECT COUNT(*) FROM bookings WHERE DATE(created_at)=CURDATE()"),
-            "total_revenue_paise":        int(conn.execute(text("SELECT COALESCE(SUM(amount),0) FROM payments WHERE status='PAID'")).scalar() or 0),
+            "total_revenue_paise":        int(conn.execute(text("SELECT COALESCE(SUM(amount - COALESCE(refund_amount,0)),0) FROM payments "
+                         "WHERE status IN ('PAID','PARTIALLY_REFUNDED','REFUND_FAILED')")).scalar() or 0),
             "pending_provider_approvals": _count("SELECT COUNT(*) FROM providers WHERE status='PENDING'"),
         }
 
@@ -154,14 +156,17 @@ class AdminMaster:
             params["status"] = status
         sql = f"""
             SELECT pay.payment_id, pay.amount, pay.status, pay.payment_method,
-                   pay.created_at, pay.razorpay_payment_id, pay.refund_amount,
+                   pay.created_at, pay.paid_at, pay.razorpay_payment_id, pay.razorpay_order_id,
+                   pay.refund_amount, pay.purpose, pay.plan_id,
                    b.booking_id, b.status AS booking_status,
                    cu.name AS customer_name,
-                   s.name  AS service_name
+                   s.name  AS service_name,
+                   sp.name AS plan_name
             FROM payments pay
             LEFT JOIN bookings b ON pay.booking_id  = b.booking_id
             LEFT JOIN users   cu ON pay.customer_id = cu.user_id
             LEFT JOIN services s ON b.service_id    = s.service_id
+            LEFT JOIN subscription_plans sp ON pay.plan_id = sp.plan_id
             {where}
             ORDER BY pay.created_at DESC
             LIMIT :lim OFFSET :off
@@ -169,8 +174,9 @@ class AdminMaster:
         count_sql = f"SELECT COUNT(*) FROM payments pay {where}"
         stats_sql = """
             SELECT
-              COALESCE(SUM(CASE WHEN status='PAID'     THEN amount       ELSE 0 END), 0) AS total_revenue,
-              COALESCE(SUM(CASE WHEN status='REFUNDED' THEN refund_amount ELSE 0 END), 0) AS total_refunded,
+              COALESCE(SUM(CASE WHEN status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED','REFUND_FAILED')
+                                THEN amount ELSE 0 END), 0) AS total_revenue,
+              COALESCE(SUM(refund_amount), 0) AS total_refunded,
               COUNT(CASE WHEN status='PAID'    THEN 1 END) AS paid_count,
               COUNT(CASE WHEN status='PENDING' THEN 1 END) AS pending_count
             FROM payments

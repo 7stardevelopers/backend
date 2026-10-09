@@ -96,7 +96,20 @@ In Lambda: `env_loader.load_secrets()` fetches JSON from AWS Secrets Manager (`S
 Uses Expo Push API (`https://exp.host/--/api/v2/push/send`). Tokens must start with `ExponentPushToken[`. Push is always non-fatal (wrapped in try/except). Also writes to `in_app_notifications` table (even for users with no push token). WebSocket pushes go through `utilities/ws_push.py`, which deletes stale connections on `GoneException`.
 
 ### Payment flow
+<<<<<<< HEAD
 Razorpay: `POST /bookings` (stays PENDING, hidden from workers) → `POST /payments/create-order` → client completes payment → `POST /payments/verify` (HMAC signature check, idempotent) → `BookingsService.dispatch` pushes "New Job" to nearby workers. Workers can list/view/claim a PENDING booking only when it is `PAID` or `total_amount = 0` (`is_dispatchable`; ₹0 bookings dispatch at creation). Unpaid bookings are cancelled after `UNPAID_BOOKING_TTL_MIN` (default 15) by `bookings/unpaid_expiry.py` (run from `location_trigger`); a verify arriving after that refunds. Provider earnings (`total - PLATFORM_FEE_PCT %`, default 10%) are credited once when the job reaches COMPLETED (`_credit_earning`), not at payment time.
+=======
+All money is integer **paise** (₹499 = `49900`) in the DB and API; the apps convert at the boundary. Coins are a count (1 coin = ₹1 = 100 paise, `booking_pricing.COIN_VALUE_PAISE`).
+
+Razorpay (`payments/payment_service.py`, `migrations/005_payment_hardening.sql`):
+- `POST /payments/create-order {booking_id}` or `{plan_id}` → amount from the DB, always INR; an unpaid order for the same thing is reused. Paid/cancelled bookings and an already-active plan are refused.
+- `POST /payments/verify` (app callback) and `POST /payments/webhook` (public, HMAC of the raw body with `RAZORPAY_WEBHOOK_SECRET`; events `payment.authorized/captured`, `order.paid`, `payment.failed`, `refund.failed`) both go through `confirm_payment`, which is idempotent (`PaymentMaster.mark_paid` / `BookingsMaster.mark_paid` are conditional updates). Authorized payments are captured in code. A second payment for an already-paid or cancelled booking is refunded automatically.
+- Paid subscription plans activate only through a SUBSCRIPTION payment; `POST /subscriptions/subscribe` works for free plans only.
+- Worker earnings: `total_amount − platform_fee` (`PLATFORM_FEE_PCT`, default 10, stored on the booking at creation) is credited **once, when the booking is COMPLETED and paid online** (`credit_provider_for_booking`, guarded by `bookings.earning_credited_at`) — from completion, admin force-complete, or a payment that arrives after completion. Cash jobs credit nothing.
+- Every cancel path (`_do_cancel`, incl. admin) refunds the online payment and claws back any credited earning as a `DEDUCTION` row. `POST /payments/refund {payment_id|booking_id, amount?}` (admin/support) refunds partially or fully; a Razorpay failure flags the payment `REFUND_FAILED`.
+- Payment statuses: `PENDING | PAID | FAILED | PARTIALLY_REFUNDED | REFUNDED | REFUND_FAILED`.
+- `RAZORPAY_KEY_ID/SECRET` missing → payments fail closed (`PaymentsNotConfigured`), never accept unsigned data.
+>>>>>>> f42a2ddc30334fb4703d1d583b930d0dacc4a83d
 
 ### Booking pricing
 All amounts are computed server-side in `bookings/booking_pricing.py` from `services.base_price` / `sub_services.price`; client `sub_total`/`discount`/`total_amount` are ignored. Coupon, subscription quota and coins are applied (and reserved atomically) inside booking creation.
@@ -125,11 +138,12 @@ Transitions are role-gated via `ALLOWED_TRANSITIONS` in `bookings/bookings_servi
 | `JWT_SECRET` | HS256 signing key |
 | `REDIS_URL` | Redis connection URL |
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | Payment gateway |
+| `RAZORPAY_WEBHOOK_SECRET` | Secret set on the Razorpay webhook (Dashboard → Webhooks) for `POST /payments/webhook` |
+| `PLATFORM_FEE_PCT` | Platform cut of online-paid bookings (default 10) |
 | `MSG91_AUTH_KEY` | SMS OTP provider (if unset, OTP printed to stdout) |
 | `S3_DOCUMENTS_BUCKET` | Provider KYC docs bucket |
 | `S3_MEDIA_BUCKET` | General media (proof photos, etc.) |
 | `WEBSOCKET_ENDPOINT_URL` | API GW Management API URL for WS broadcasting |
-| `PLATFORM_FEE_PCT` | Platform cut from payments (default: 10) |
 | `ENVIRONMENT` | `staging` / `production` (set by template). Enables fail-closed Redis, disables master OTP in production, hides OTPs from logs |
 | `EXOTEL_SID` / `EXOTEL_API_KEY` / `EXOTEL_API_TOKEN` | Exotel account credentials (masked calling) |
 | `EXOTEL_SUBDOMAIN` | `api.exotel.com` or `api.in.exotel.com` — must match the Exotel account |

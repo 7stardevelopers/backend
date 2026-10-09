@@ -111,6 +111,8 @@ ROUTES = [
     ("POST", "/payments/verify",            _pay.verify_payment,         []),
     ("POST", "/payments/payout-request",    _pay.payout_request,         []),
     ("POST", "/payments/refund",            _pay.request_refund,         []),
+    # Razorpay → us; verified with RAZORPAY_WEBHOOK_SECRET over the raw body.
+    ("POST", "/payments/webhook",           _pay.webhook,                []),
     ("GET",  "/payments",                   _pay.list_all,               []),
 
     # COUPONS
@@ -248,6 +250,7 @@ PUBLIC_ROUTES = {
     ("GET",  r"/reviews/provider/(?P<id>[^/]+)"),
     ("GET",  "/announcements/mine"),
     ("POST", "/calls/status-callback"),   # Exotel webhook — verified by shared secret
+    ("POST", "/payments/webhook"),        # Razorpay webhook — verified by HMAC signature
     ("GET",  r"/track/(?P<token>[^/]+)/page"),  # share-tracking link — token-gated
     ("GET",  r"/track/(?P<token>[^/]+)"),
 }

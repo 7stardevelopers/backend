@@ -40,6 +40,9 @@ def handle_rest(event, context):
         req["body"] = strip_media_signatures(req["body"])
         # Snapshot before dispatch — services pop keys out of obj.
         req_body = dict(req["body"]) if isinstance(req["body"], dict) else req["body"]
+        if "raw_body" in req:  # after the snapshot so the raw payload isn't logged twice
+            req["body"]["_raw_body"] = req["raw_body"]
+            req["body"]["_rzp_signature"] = req["rzp_signature"]
         with get_connection() as conn:
             status, data = dispatch_rest(
                 method=req["method"],

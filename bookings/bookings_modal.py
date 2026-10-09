@@ -179,6 +179,31 @@ class BookingsMaster:
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
+    def mark_paid(self, conn, booking_id: str, payment_id: str) -> bool:
+        """Booking → PAID only if not already paid (by another order) and still live."""
+        result = conn.execute(
+            self.t.update()
+            .where(self.t.c.booking_id == booking_id)
+            # Never over a paid or refunded booking — that payment is a duplicate.
+            .where(or_(self.t.c.payment_status.in_(("PENDING", "FAILED")), self.t.c.payment_status.is_(None)))
+            .where(self.t.c.status.notin_(("CANCELLED", "REJECTED")))
+            .values(payment_id=payment_id, payment_status="PAID", updated_at=now_utc())
+        )
+        return result.rowcount == 1
+
+    def claim_earning_credit(self, conn, booking_id: str) -> bool:
+        """The worker's share is credited once: completed AND paid online."""
+        result = conn.execute(
+            self.t.update()
+            .where(self.t.c.booking_id == booking_id)
+            .where(self.t.c.status == "COMPLETED")
+            .where(self.t.c.payment_status.in_(("PAID", "PARTIALLY_REFUNDED")))
+            .where(self.t.c.provider_id.isnot(None))
+            .where(self.t.c.earning_credited_at.is_(None))
+            .values(earning_credited_at=now_utc())
+        )
+        return result.rowcount == 1
+
     def update_payment(self, conn, booking_id: str, payment_id: str, payment_status: str):
         conn.execute(
             self.t.update()

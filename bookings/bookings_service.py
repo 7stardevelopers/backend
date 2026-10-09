@@ -1,7 +1,10 @@
 import hmac
+<<<<<<< HEAD
 import json
 import os
 import razorpay
+=======
+>>>>>>> f42a2ddc30334fb4703d1d583b930d0dacc4a83d
 from datetime import datetime, timezone
 from sqlalchemy import text
 
@@ -11,7 +14,7 @@ from bookings.bookings_validator import (
 )
 from bookings.booking_pricing import price_booking, apply_booking_side_effects, release_booking_side_effects
 from notifications.notifications_service import NotificationsService
-from payments.payment_modal import PaymentMaster
+from payments.payment_service import platform_fee_for
 from providers.provider_matching import match_provider
 from providers.providers_modal import ProvidersMaster, is_registered_worker, WORKER_CANNOT_BOOK
 from utilities.common_table_elements import new_uuid, now_utc
@@ -94,6 +97,7 @@ class BookingsService:
             "sub_total": pricing["sub_total"],
             "discount": pricing["discount"],
             "total_amount": pricing["total_amount"],
+            "platform_fee": platform_fee_for(pricing["total_amount"]),
             "coupon_id": validated.coupon_id if pricing["coupon"] else None,
             "is_instant": validated.is_instant,
             "customer_notes": validated.customer_notes,
@@ -448,8 +452,14 @@ class BookingsService:
             self._hide_door_otp(updated, role)
             return "success", updated
         updated = self.modal.update_status(connection, booking_id, new_status, expected_status=booking["status"])
+<<<<<<< HEAD
         if new_status == "COMPLETED":
             self._credit_earning(connection, updated)
+=======
+        if new_status == "COMPLETED":  # admin force-complete
+            from payments.payment_service import PaymentService
+            PaymentService().credit_provider_for_booking(connection, booking_id)
+>>>>>>> f42a2ddc30334fb4703d1d583b930d0dacc4a83d
         self._notify_status_change(connection, updated, new_status)
         self._hide_door_otp(updated, role)
         return "success", updated
@@ -545,6 +555,8 @@ class BookingsService:
                            "ticket_id": ticket["ticket_id"]}
 
     def _on_completed(self, connection, booking_id):
+        from payments.payment_service import PaymentService
+        PaymentService().credit_provider_for_booking(connection, booking_id)
         booking = self.modal.read_one(connection, booking_id)
         self._credit_earning(connection, booking)
         self._notify_status_change(connection, booking, "COMPLETED")
@@ -616,19 +628,10 @@ class BookingsService:
             except Exception as e:
                 print(f"[Cancel] Provider notification failed (non-fatal): {e}")
 
-        if booking.get("payment_status") == "PAID" and booking.get("payment_id"):
-            try:
-                pay_modal = PaymentMaster()
-                payment = pay_modal.find_payment(connection, payment_id=booking["payment_id"])
-                if payment and payment.get("razorpay_payment_id"):
-                    client = razorpay.Client(auth=(
-                        os.environ.get("RAZORPAY_KEY_ID", ""),
-                        os.environ.get("RAZORPAY_KEY_SECRET", ""),
-                    ))
-                    client.payment.refund(payment["razorpay_payment_id"], {"amount": payment["amount"]})
-                    pay_modal.update_payment(connection, payment["payment_id"], {"status": "REFUNDED"})
-            except Exception as e:
-                print(f"[Cancel] Refund initiation failed (non-fatal): {e}")
+        # Refund an online payment and take back anything already credited to the worker.
+        # Re-read: a payment may have landed between our read and the cancel.
+        from payments.payment_service import PaymentService
+        PaymentService().refund_booking_on_cancel(connection, self.modal.read_one(connection, booking_id))
 
         return updated
 

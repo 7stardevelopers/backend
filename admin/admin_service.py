@@ -49,7 +49,19 @@ class AdminService:
                 fields["status"] = "ACCEPTED"
         if fields.get("status") == "ACCEPTED" and not (fields.get("provider_id") or booking.get("provider_id")):
             raise ValueError("Assign a provider_id to accept a booking")
+        if fields.get("status") and booking["status"] in ("CANCELLED", "REJECTED"):
+            raise ValueError(f"Cannot change a booking that is {booking['status']}")
+        if fields.get("status") == "CANCELLED":
+            # Same path as every other cancel: refund + take back the worker's credit.
+            from bookings.bookings_service import BookingsService
+            if booking["status"] in ("COMPLETED", "CANCELLED", "REJECTED"):
+                raise ValueError(f"Cannot cancel a booking that is {booking['status']}")
+            BookingsService()._do_cancel(connection, booking)
+            return "success", {"message": "Booking cancelled"}
         self.modal.update_booking(connection, booking_id, fields)
+        if fields.get("status") == "COMPLETED":
+            from payments.payment_service import PaymentService
+            PaymentService().credit_provider_for_booking(connection, booking_id)
         return "success", {"message": "Booking updated"}
 
     def list_users(self, obj, connection):
