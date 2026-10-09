@@ -20,6 +20,7 @@ from media.media_service import MediaService
 from calls.calls_service import CallsService
 from customers.customers_service import CustomersService
 from referrals.referrals_service import ReferralsService
+from identity_reports.identity_reports_service import IdentityReportsService
 
 _auth   = AuthorizationService()
 _books  = BookingsService()
@@ -42,6 +43,7 @@ _msgs   = MessagesService()
 _calls  = CallsService()
 _custs  = CustomersService()
 _refs   = ReferralsService()
+_ident  = IdentityReportsService()
 
 class RouteNotFound(Exception):
     pass
@@ -89,6 +91,8 @@ ROUTES = [
     ("POST", r"/bookings/(?P<id>[^/]+)/cancel",  _books.cancel,          ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/otp-verify", _books.verify_door_otp, ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/otp-regenerate", _books.regenerate_door_otp, ["id"]),
+    # Customer compares the worker with their profile photo at the door; "yes" issues the door OTP.
+    ("POST", r"/bookings/(?P<id>[^/]+)/identity-check", _ident.door_check, ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/tip",   _books.add_tip,           ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/complete", _books.complete,        ["id"]),
     ("POST", r"/bookings/(?P<id>[^/]+)/confirm-complete", _books.confirm_complete, ["id"]),
@@ -144,6 +148,8 @@ ROUTES = [
     ("PATCH",r"/providers/(?P<id>[^/]+)/suspend",  _admin.suspend_provider_logged, ["id"]),
     ("PATCH",r"/admin/providers/(?P<id>[^/]+)/bio", _admin.update_provider_bio_logged, ["id"]),
     ("PATCH",r"/admin/providers/(?P<id>[^/]+)/photo/reset", _admin.reset_provider_photo_logged, ["id"]),
+    ("GET",  "/admin/identity-reports",     _ident.admin_list,           []),
+    ("PATCH",r"/admin/identity-reports/(?P<id>[^/]+)", _ident.admin_resolve, ["id"]),
 
     # DOCUMENTS
     ("POST", "/documents/upload",           _docs.upload,                []),

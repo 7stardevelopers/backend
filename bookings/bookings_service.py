@@ -16,7 +16,9 @@ from providers.providers_modal import ProvidersMaster, is_registered_worker, WOR
 from utilities.common_table_elements import new_uuid, now_utc
 from utilities.db_connection import get_table
 
-DOOR_OTP_TTL_SECONDS = 3600   # 1 hour — regenerated on EN_ROUTE anyway, this is a backstop
+# The code is created at the door (customer confirms the worker's face), so this
+# only has to cover the wait at the door; tapping "Yes" again issues a fresh one.
+DOOR_OTP_TTL_SECONDS = 4 * 3600
 MAX_OTP_ATTEMPTS = 5
 
 # PENDING → ACCEPTED goes through accept_booking (claim) and
@@ -41,6 +43,14 @@ ALLOWED_TRANSITIONS = {
 }
 
 
+def door_otp_expired(booking) -> bool:
+    generated_at = booking.get("door_otp_generated_at") or booking.get("created_at")
+    if not generated_at:
+        return False
+    now = datetime.utcnow() if generated_at.tzinfo is None else datetime.now(timezone.utc)
+    return (now - generated_at).total_seconds() > DOOR_OTP_TTL_SECONDS
+
+
 class BookingsService:
     def __init__(self):
         self.modal = BookingsMaster()
@@ -50,10 +60,13 @@ class BookingsService:
     def _hide_door_otp(booking, role):
         # A provider must never be able to read the OTP directly out of a
         # response — it's the customer's spoken confirmation that the right
-        # person is at the door. Only strip it for that role; customer/admin
-        # still need it.
-        if role == "PROVIDER":
+        # person is at the door. The customer sees it only after confirming the
+        # worker's face matches their profile photo; admin always sees it.
+        if role == "PROVIDER" or (role == "CUSTOMER" and not booking.get("identity_confirmed_at")):
             booking.pop("door_otp", None)
+        if role == "PROVIDER":
+            # Don't tip off someone the customer reported as the wrong person.
+            booking.pop("identity_mismatch_at", None)
         return booking
 
     def create(self, obj, connection):
@@ -189,6 +202,10 @@ class BookingsService:
         else:
             raise PermissionError("Unauthorized")
         bookings = self.modal.read(connection, filters, limit=20, offset=(page - 1) * 20)
+        if role == "CUSTOMER":
+            self.modal.attach_provider_summary(connection, bookings)
+        for b in bookings:
+            self._hide_door_otp(b, role)
         return "success", bookings
 
     def get_detail(self, obj, connection):
@@ -417,12 +434,6 @@ class BookingsService:
             self._hide_door_otp(updated, role)
             return "success", updated
         updated = self.modal.update_status(connection, booking_id, new_status, expected_status=booking["status"])
-        if new_status == "EN_ROUTE":
-            # Fresh OTP + reset lockout/TTL clock — the booking may have been
-            # created hours or days ago, and any earlier failed attempts
-            # shouldn't count against the customer once the job actually starts.
-            self.modal.regenerate_door_otp(connection, booking_id)
-            updated = self.modal.read_one(connection, booking_id)
         self._notify_status_change(connection, updated, new_status)
         self._hide_door_otp(updated, role)
         return "success", updated
@@ -602,14 +613,14 @@ class BookingsService:
         if booking["status"] not in ("ACCEPTED", "EN_ROUTE") or booking.get("door_otp_verified"):
             raise ValueError(f"Cannot start a job that is {booking['status']}")
 
+        if not booking.get("door_otp"):
+            raise ValueError("The customer hasn't confirmed it's you yet. Ask them to check your photo in their app.")
+
         if (booking.get("otp_attempt_count") or 0) >= MAX_OTP_ATTEMPTS:
             raise ValueError("Too many incorrect attempts. Ask the customer to resend the OTP.")
 
-        generated_at = booking.get("door_otp_generated_at") or booking.get("created_at")
-        if generated_at:
-            now = datetime.utcnow() if generated_at.tzinfo is None else datetime.now(timezone.utc)
-            if (now - generated_at).total_seconds() > DOOR_OTP_TTL_SECONDS:
-                raise ValueError("This OTP has expired. Ask the customer to resend it.")
+        if door_otp_expired(booking):
+            raise ValueError("This OTP has expired. Ask the customer to resend it.")
 
         # Compare before writing anything: a wrong guess raises, which rolls back
         # this request's transaction — so the attempt is recorded on its own
@@ -639,6 +650,8 @@ class BookingsService:
             raise PermissionError("Access denied")
         if booking["status"] not in ("ACCEPTED", "EN_ROUTE"):
             raise ValueError("OTP can only be resent before the job has started")
+        if role != "ADMIN" and not booking.get("identity_confirmed_at"):
+            raise ValueError("Confirm the expert at your door first")
         self.modal.regenerate_door_otp(connection, booking_id)
         return "success", {"message": "A new OTP has been generated — check your booking details."}
 

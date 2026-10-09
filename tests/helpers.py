@@ -72,11 +72,17 @@ CREATE TABLE bookings (
     otp_attempt_count INTEGER DEFAULT 0, door_otp_generated_at TIMESTAMP,
     scheduled_at TIMESTAMP, service_snapshot JSON, address_snapshot JSON, proof_photos JSON,
     provider_done_at TIMESTAMP, customer_done_at TIMESTAMP, completion_disputed_at TIMESTAMP,
+    identity_confirmed_at TIMESTAMP, identity_mismatch_at TIMESTAMP,
     updated_at TIMESTAMP, created_at TIMESTAMP
 );
 CREATE TABLE support_tickets (
     ticket_id TEXT PRIMARY KEY, user_id TEXT, subject TEXT, category TEXT, booking_id TEXT,
     priority TEXT, status TEXT, created_at TIMESTAMP, updated_at TIMESTAMP
+);
+CREATE TABLE identity_reports (
+    report_id TEXT PRIMARY KEY, booking_id TEXT UNIQUE, provider_id TEXT, customer_id TEXT,
+    ticket_id TEXT, customer_note TEXT, status TEXT DEFAULT 'OPEN', admin_note TEXT,
+    resolved_by TEXT, resolved_at TIMESTAMP, created_at TIMESTAMP
 );
 CREATE TABLE ticket_messages (
     message_id TEXT PRIMARY KEY, ticket_id TEXT, sender_id TEXT, content TEXT,

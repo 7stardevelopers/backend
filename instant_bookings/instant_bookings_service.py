@@ -103,7 +103,7 @@ class InstantBookingsService:
             is_provider = bool(prov) and str(prov["provider_id"]) == str(booking.get("provider_id"))
             if not is_customer and not is_provider:
                 raise PermissionError("Access denied")
-        if role == "PROVIDER":
-            booking.pop("door_otp", None)
+        from bookings.bookings_service import BookingsService
+        BookingsService._hide_door_otp(booking, role)
         instant = self.modal.get_by_booking(connection, booking_id)
         return "success", {**booking, "instant": instant}

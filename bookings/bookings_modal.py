@@ -26,8 +26,8 @@ class BookingsMaster:
 
     def create(self, conn, obj: dict) -> dict:
         obj["booking_id"] = new_uuid()
-        obj["door_otp"] = f"{secrets.randbelow(10**4):04d}"
-        obj["door_otp_generated_at"] = now_utc()
+        # No door OTP yet: it is generated only when the customer confirms the
+        # worker's face at the door (identity_reports.door_check).
         obj["created_at"] = now_utc()
         obj["updated_at"] = now_utc()
         conn.execute(self.t.insert().values(**obj))
@@ -131,6 +131,21 @@ class BookingsMaster:
         from utilities.db_connection import get_engine
         with get_engine().begin() as own:
             return self.record_failed_otp_attempt(own, booking_id)
+
+    def confirm_identity(self, conn, booking_id: str):
+        conn.execute(
+            self.t.update().where(self.t.c.booking_id == booking_id)
+            .values(identity_confirmed_at=now_utc(), updated_at=now_utc())
+        )
+
+    def mark_identity_mismatch(self, conn, booking_id: str):
+        """Customer says it's not the worker in the photo: withdraw any door OTP
+        so nobody can start the job until admin sorts it out."""
+        conn.execute(
+            self.t.update().where(self.t.c.booking_id == booking_id)
+            .values(identity_mismatch_at=now_utc(), identity_confirmed_at=None,
+                    door_otp=None, door_otp_generated_at=None, updated_at=now_utc())
+        )
 
     def regenerate_door_otp(self, conn, booking_id: str) -> str:
         new_otp = f"{secrets.randbelow(10**4):04d}"
@@ -263,6 +278,26 @@ class BookingsMaster:
         by_id = {r["provider_id"]: dict(r) for r in rows}
         # preserve the most-recently-booked-first order from the first query
         return [by_id[pid] for pid in provider_ids if pid in by_id]
+
+    def attach_provider_summary(self, conn, bookings: list) -> list:
+        """Adds provider_name / provider_photo / provider_rating to each booking
+        (in place) — the customer's lists show the expert's face like the detail does."""
+        provider_ids = list({b["provider_id"] for b in bookings if b.get("provider_id")})
+        if not provider_ids:
+            return bookings
+        sql = text("""
+            SELECT p.provider_id, u.name, u.photo_url, p.avg_rating
+            FROM providers p JOIN users u ON u.user_id = p.user_id
+            WHERE p.provider_id IN :ids
+        """).bindparams(bindparam("ids", expanding=True))
+        by_id = {r["provider_id"]: r for r in conn.execute(sql, {"ids": provider_ids}).mappings().fetchall()}
+        for b in bookings:
+            row = by_id.get(b.get("provider_id"))
+            if row:
+                b["provider_name"] = row["name"]
+                b["provider_photo"] = row["photo_url"]
+                b["provider_rating"] = float(row["avg_rating"] or 0)
+        return bookings
 
     def claim_booking(self, conn, booking_id: str, provider_id: str) -> bool:
         """Atomically assign provider only if still unassigned. Returns True if claimed."""

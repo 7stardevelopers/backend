@@ -106,12 +106,15 @@ All amounts are computed server-side in `bookings/booking_pricing.py` from `serv
 PENDING → ACCEPTED            POST/PATCH /bookings/{id}/accept (approved providers only, atomic claim)
 ACCEPTED → EN_ROUTE           PATCH /status (provider)
 ACCEPTED|EN_ROUTE → IN_PROGRESS   POST /otp-verify only (door OTP cannot be skipped)
+                              — the OTP exists only after POST /identity-check {match:true} (below)
 IN_PROGRESS → COMPLETED       only when BOTH: POST /complete (provider, proof photos) AND
                               POST /confirm-complete (customer, in their own app) — either order; or admin
                               POST /report-problem (customer) blocks completion + opens a support ticket
 PENDING|ACCEPTED → CANCELLED  customer (own bookings) / admin; admin also from EN_ROUTE, IN_PROGRESS
 ```
 Two-sided completion (`migrations/003_dual_completion.sql`): `provider_done_at` / `customer_done_at` / `completion_disputed_at` on `bookings`; `BookingsMaster.try_finish` flips to COMPLETED atomically once both are set and nothing is disputed. Nothing auto-completes (a worker could otherwise leave before finishing): `bookings/completion_reminders.py` (run by `location_trigger`) reminds the customer at 30 min / 2 h and logs `COMPLETION_UNCONFIRMED` for admin after 24 h. A worker with `provider_done_at` set is free for new jobs and no longer shares location.
+
+Door identity check (`migrations/004_door_identity_check.sql`, `identity_reports/`): no door OTP is created at booking time. At the door the customer compares the worker with their locked profile selfie and calls `POST /bookings/{id}/identity-check` — `{match: true}` sets `identity_confirmed_at` and generates (or returns the live) OTP, valid `DOOR_OTP_TTL_SECONDS` (4 h); `{match: false, note?}` sets `identity_mismatch_at`, withdraws any OTP, opens an URGENT `SAFETY` support ticket (staff push) and one `identity_reports` row per booking. Customers never get `door_otp` in responses before confirming. Admin: `GET /admin/identity-reports?status=`, `PATCH /admin/identity-reports/{id}` `{status: OPEN|ACTION_TAKEN|DISMISSED, admin_note}`.
 
 Transitions are role-gated via `ALLOWED_TRANSITIONS` in `bookings/bookings_service.py` and written with `update_status(..., expected_status=...)` so concurrent requests can't overwrite each other. Door OTP is 4 digits.
 

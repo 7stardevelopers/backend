@@ -128,7 +128,7 @@ def check_arrival(conn, booking, lat, lng, eta=None, notifier=None):
     snap = _json(booking.service_snapshot)
 
     if km <= ARRIVED_KM and not snap.get("arrived_notified"):
-        stage, title, body = "arrived", "Your expert has arrived", "Keep your door OTP ready."
+        stage, title, body = "arrived", "Your expert has arrived", "Check their photo in the app to get your door code."
         snap["arrived_notified"] = snap["arriving_notified"] = True
     elif not snap.get("arriving_notified") and (
         km <= ARRIVING_KM or (eta and eta.get("duration_min") is not None and eta["duration_min"] <= ARRIVING_MIN)
