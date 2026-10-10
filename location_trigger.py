@@ -15,6 +15,7 @@ load_secrets()
 
 
 def handler(event, context):
+<<<<<<< HEAD
     try:
         with get_connection() as conn:
             _process_upcoming_bookings(conn)
@@ -35,6 +36,27 @@ def handler(event, context):
         print(f"[LocationTrigger] Error: {e}")
         traceback.print_exc()
         return {"statusCode": 500, "body": str(e)}
+=======
+    # Each step in its own transaction and try: one failing must not stop the
+    # others (e.g. unpaid-booking expiry releasing coupons/coins/quota).
+    failed = []
+    for name, step in (
+        ("upcoming", lambda conn: _process_upcoming_bookings(conn)),
+        ("stale_trackers", lambda conn: __import__("bookings.live_tracking", fromlist=["x"]).nudge_stale_trackers(conn)),
+        ("completion_reminders", lambda conn: __import__("bookings.completion_reminders", fromlist=["x"]).remind_unconfirmed(conn)),
+        ("unpaid_expiry", lambda conn: __import__("bookings.unpaid_expiry", fromlist=["x"]).expire_unpaid(conn)),
+    ):
+        try:
+            with get_connection() as conn:
+                step(conn)
+        except Exception as e:
+            failed.append(name)
+            print(f"[LocationTrigger] {name} failed: {e}")
+            traceback.print_exc()
+    if failed:
+        return {"statusCode": 500, "body": f"Failed: {', '.join(failed)}"}
+    return {"statusCode": 200, "body": "OK"}
+>>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
 
 
 def _process_upcoming_bookings(conn):

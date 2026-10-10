@@ -207,12 +207,13 @@ def release_booking_side_effects(conn, booking: dict):
         from referrals.referrals_modal import ReferralsMaster
         ReferralsMaster().credit(conn, user_id, int(spent), "BOOKING_REFUND", booking_id)
 
-    sub = SubscriptionsMaster().get_active_subscription(conn, user_id)
-    if sub and booking.get("created_at") and sub.get("starts_at") and booking["created_at"] >= sub["starts_at"]:
+    # Only if this booking actually consumed plan quota (otherwise an unpaid,
+    # expired booking would hand out free quota forever).
+    if booking.get("subscription_id"):
         subs_t = get_table("user_subscriptions")
         conn.execute(
             subs_t.update()
-            .where(subs_t.c.subscription_id == sub["subscription_id"])
+            .where(subs_t.c.subscription_id == booking["subscription_id"])
             .where(subs_t.c.bookings_used > 0)
             .values(bookings_used=subs_t.c.bookings_used - 1)
         )

@@ -79,7 +79,7 @@ class PaymentTestBase(unittest.TestCase):
 class CheckoutTests(PaymentTestBase):
     def test_order_amount_from_db_in_inr(self):
         o = self.order(booking_id="b1", amount=1, currency="USD")
-        self.assertEqual((o["amount"], o["currency"]), (49900, "INR"))
+        self.assertEqual((o["amount"], o["currency"], o["key_id"]), (49900, "INR", "rzp_test_x"))
         body = self.rzp.order.create.call_args.args[0]
         self.assertEqual((body["amount"], body["currency"]), (49900, "INR"))
 
@@ -172,6 +172,17 @@ class EarningsTests(PaymentTestBase):
     def test_cash_job_completion_credits_nothing(self):
         self.assertEqual(self.complete(), 0)
 
+    def test_discount_is_platform_funded(self):
+        # ₹499 job, customer paid ₹399 after a coupon: worker still gets 90% of ₹499
+        self.conn.exec_driver_sql("UPDATE bookings SET sub_total=49900, total_amount=39900 WHERE booking_id='b1'")
+        self.paid_amount = 39900
+        self.verify(self.order())
+        self.assertEqual(self.complete(), 44910)
+
+    def test_fully_covered_booking_still_pays_worker(self):
+        self.conn.exec_driver_sql("UPDATE bookings SET sub_total=49900, total_amount=0 WHERE booking_id='b1'")
+        self.assertEqual(self.complete(), 44910)
+
     def test_second_payment_is_refunded_not_credited(self):
         first = self.order()
         self.verify(first)
@@ -229,6 +240,15 @@ class RefundTests(PaymentTestBase):
         self.assertEqual((out["refunded"], out["refund_amount"], out["status"]), (39900, 49900, "REFUNDED"))
         with self.assertRaises(ValueError):
             self.admin_refund()
+
+    def test_admin_refund_can_deduct_from_worker(self):
+        self.verify(self.order())
+        self.complete()
+        out = self.admin_refund(amount=10000, deduct_from_worker=True)
+        self.assertEqual(out["deducted_from_worker"], 10000)
+        self.assertEqual(self.wallet(), 44910 - 10000)
+        out = self.admin_refund(amount=5000)          # default: platform bears it
+        self.assertEqual((out["deducted_from_worker"], self.wallet()), (0, 34910))
 
     def test_admin_refund_error_is_readable(self):
         self.verify(self.order())
@@ -322,6 +342,17 @@ class PlanPaymentTests(PaymentTestBase):
         self.assertEqual(n, 1)
         with self.assertRaisesRegex(ValueError, "already active"):
             self.order(plan_id="pro")
+
+    def test_plan_paid_twice_second_is_refunded(self):
+        first = self.order(plan_id="pro")
+        self.conn.exec_driver_sql("UPDATE payments SET status='FAILED'")   # first attempt looked failed
+        second = self.order(plan_id="pro")
+        self.verify(second, "pay_2", plan_id="pro")
+        out = self.verify(first, "pay_1", plan_id="pro")                   # late UPI success on the first
+        self.assertTrue(out["refunded"])
+        self.assertEqual(self.row("payments", "razorpay_payment_id", "pay_1")["status"], "REFUNDED")
+        n = self.conn.exec_driver_sql("SELECT COUNT(*) FROM user_subscriptions WHERE status='ACTIVE'").scalar()
+        self.assertEqual(n, 1)
 
     def test_full_refund_turns_plan_off(self):
         o = self.order(plan_id="pro")

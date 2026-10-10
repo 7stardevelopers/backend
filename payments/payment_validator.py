@@ -35,6 +35,8 @@ class RefundSchema(BaseModel):
     payment_id: Optional[str] = None
     amount: Optional[int] = Field(None, gt=0)  # None = everything still refundable
     reason: Optional[str] = Field(None, max_length=200)
+    # Also take the refunded amount back from the worker's wallet (completed jobs).
+    deduct_from_worker: bool = False
 
     @model_validator(mode="after")
     def _one_target(self):

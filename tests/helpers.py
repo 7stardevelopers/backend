@@ -79,10 +79,14 @@ CREATE TABLE bookings (
     identity_confirmed_at TIMESTAMP, identity_mismatch_at TIMESTAMP,
     sub_total INTEGER DEFAULT 0, discount INTEGER DEFAULT 0, total_amount INTEGER DEFAULT 0,
     platform_fee INTEGER DEFAULT 0, payment_status TEXT DEFAULT 'PENDING', payment_id TEXT,
+<<<<<<< HEAD
     earning_credited_at TIMESTAMP, coupon_id TEXT, requested_provider_id TEXT,
     payment_mode TEXT DEFAULT 'PAY_AFTER', address_id TEXT, is_instant BOOLEAN DEFAULT 0, customer_notes TEXT,
     accepted_at TIMESTAMP, cancellation_fee INTEGER DEFAULT 0, cancel_fee_status TEXT,
     cancel_fee_booking_id TEXT, dues_collected INTEGER DEFAULT 0,
+=======
+    earning_credited_at TIMESTAMP, coupon_id TEXT, requested_provider_id TEXT, subscription_id TEXT,
+>>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
     updated_at TIMESTAMP, created_at TIMESTAMP
 );
 CREATE TABLE payments (

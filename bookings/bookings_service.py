@@ -1,6 +1,10 @@
 import hmac
 import json
+<<<<<<< HEAD
 from datetime import datetime, timedelta, timezone
+=======
+from datetime import datetime, timezone
+>>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
 from sqlalchemy import text
 
 from bookings.bookings_modal import BookingsMaster
@@ -93,9 +97,15 @@ class BookingsService:
             "sub_total": pricing["sub_total"],
             "discount": pricing["discount"],
             "total_amount": pricing["total_amount"],
+<<<<<<< HEAD
             # Earlier cancellation fees in the total belong to that job's worker, not this one.
             "platform_fee": platform_fee_for(pricing["total_amount"] - pricing["previous_dues"]),
             "dues_collected": pricing["previous_dues"],
+=======
+            "platform_fee": platform_fee_for(pricing["sub_total"]),
+            # Which plan quota this booking used — only that is given back on cancel.
+            "subscription_id": pricing["subscription"]["subscription_id"] if pricing["subscription"] else None,
+>>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
             "coupon_id": validated.coupon_id if pricing["coupon"] else None,
             "is_instant": validated.is_instant,
             "customer_notes": validated.customer_notes,
@@ -471,7 +481,11 @@ class BookingsService:
         updated = self.modal.update_status(connection, booking_id, new_status, expected_status=booking["status"])
         if new_status == "COMPLETED":  # admin force-complete
             from payments.payment_service import PaymentService
+<<<<<<< HEAD
             PaymentService().settle_completed_booking(connection, booking_id)
+=======
+            PaymentService().credit_provider_for_booking(connection, booking_id)
+>>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
         self._notify_status_change(connection, updated, new_status)
         self._hide_door_otp(updated, role)
         return "success", updated
@@ -607,10 +621,14 @@ class BookingsService:
         updated["cancellation_fee"] = fee
         return "success", updated
 
+<<<<<<< HEAD
     def _do_cancel(self, connection, booking, fee: int = 0):
+=======
+    def _do_cancel(self, connection, booking, only_unpaid=False):
+>>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
         booking_id = booking["booking_id"]
         updated = self.modal.update_status(
-            connection, booking_id, "CANCELLED", expected_status=booking["status"]
+            connection, booking_id, "CANCELLED", expected_status=booking["status"], only_unpaid=only_unpaid
         )
         release_booking_side_effects(connection, booking)
         self._notify_status_change(connection, updated, "CANCELLED")

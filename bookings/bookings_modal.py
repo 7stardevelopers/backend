@@ -49,7 +49,7 @@ class BookingsMaster:
             raise ValueError(f"Booking {booking_id} not found")
         return dict(row._mapping)
 
-    def update_status(self, conn, booking_id: str, status: str, expected_status=None) -> dict:
+    def update_status(self, conn, booking_id: str, status: str, expected_status=None, only_unpaid=False) -> dict:
         """Set status. With expected_status (str or tuple), only updates while the
         booking is still in that status, so concurrent requests can't overwrite
         each other (e.g. cancel racing accept, double-complete)."""
@@ -57,6 +57,8 @@ class BookingsMaster:
         if expected_status is not None:
             allowed = (expected_status,) if isinstance(expected_status, str) else tuple(expected_status)
             upd = upd.where(self.t.c.status.in_(allowed))
+        if only_unpaid:
+            upd = upd.where(or_(self.t.c.payment_status != "PAID", self.t.c.payment_status.is_(None)))
         result = conn.execute(upd.values(status=status, updated_at=now_utc()))
         if expected_status is not None and result.rowcount == 0:
             raise ValueError("Booking status changed — please refresh and try again")
@@ -197,7 +199,8 @@ class BookingsMaster:
             self.t.update()
             .where(self.t.c.booking_id == booking_id)
             .where(self.t.c.status == "COMPLETED")
-            .where(self.t.c.payment_status.in_(("PAID", "PARTIALLY_REFUNDED")))
+            # paid online, or nothing to pay (fully covered by coupon/coins/plan)
+            .where(or_(self.t.c.payment_status.in_(("PAID", "PARTIALLY_REFUNDED")), self.t.c.total_amount == 0))
             .where(self.t.c.provider_id.isnot(None))
             .where(self.t.c.earning_credited_at.is_(None))
             .values(earning_credited_at=now_utc())

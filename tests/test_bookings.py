@@ -86,13 +86,26 @@ class PricingTests(unittest.TestCase):
                expires_at=FUTURE, bookings_used=0)
         p = price_booking(self.conn, "c1", "s1", coupon_id="cp", coins_used=40)
         apply_booking_side_effects(self.conn, "c1", "b1", p)
-        booking = {"booking_id": "b1", "customer_id": "c1", "coupon_id": "cp", "created_at": datetime.utcnow()}
+        booking = {"booking_id": "b1", "customer_id": "c1", "coupon_id": "cp", "created_at": datetime.utcnow(),
+                   "subscription_id": p["subscription"]["subscription_id"]}
         release_booking_side_effects(self.conn, booking)
 
         from referrals.referrals_modal import ReferralsMaster
         self.assertEqual(ReferralsMaster().get_balance(self.conn, "c1"), 100)
         again = price_booking(self.conn, "c1", "s1", coupon_id="cp")   # coupon usable again
         self.assertEqual(again["discount"], 500 + 4990)                 # and quota restored
+
+    def test_cancelling_a_booking_that_used_no_quota_gives_none_back(self):
+        # unpaid booking made after the quota ran out, then expired — no free quota
+        insert(self.conn, "subscription_plans", plan_id="p1", name="Basic", price=1,
+               bookings_included=1, discount_pct=10)
+        insert(self.conn, "user_subscriptions", subscription_id="sub1", user_id="c1", plan_id="p1",
+               status="ACTIVE", starts_at=datetime.utcnow() - timedelta(days=1),
+               expires_at=FUTURE, bookings_used=1)
+        release_booking_side_effects(self.conn, {"booking_id": "b9", "customer_id": "c1",
+                                                 "created_at": datetime.utcnow(), "subscription_id": None})
+        used = self.conn.exec_driver_sql("SELECT bookings_used FROM user_subscriptions").scalar()
+        self.assertEqual(used, 1)
 
     def test_percent_discount_capped_at_100(self):
         coupon = {"type": "PERCENT", "value": 150, "max_discount": None}

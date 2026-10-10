@@ -111,6 +111,9 @@ class PaymentService:
             "amount": amount,
             "currency": CURRENCY,
             "payment_id": payment["payment_id"],
+            # The app opens Checkout with this key, so test/live always matches the
+            # secret the order was created with (switch = change the backend secret).
+            "key_id": _secret("RAZORPAY_KEY_ID"),
         }
 
     def verify_payment(self, obj, connection):
@@ -204,8 +207,14 @@ class PaymentService:
 
         if payment.get("purpose") == "SUBSCRIPTION":
             from subscriptions.subscriptions_modal import SubscriptionsMaster
-            SubscriptionsMaster().create_subscription(connection, payment["customer_id"],
-                                                      payment["plan_id"], payment["payment_id"])
+            subs = SubscriptionsMaster()
+            active = subs.get_active_subscription(connection, payment["customer_id"])
+            if active and str(active["plan_id"]) == str(payment["plan_id"]) \
+                    and str(active.get("payment_id")) != str(payment["payment_id"]):
+                # Same plan already bought with another payment (retry / late UPI) — give this back.
+                self.refund(connection, payment, None, "Plan already active", raise_on_error=False)
+                return "duplicate_refunded"
+            subs.create_subscription(connection, payment["customer_id"], payment["plan_id"], payment["payment_id"])
             self._push(connection, [payment["customer_id"]], "Subscription active",
                        "Your plan is active. Enjoy your discount on bookings.",
                        {"type": "subscription_active"})
@@ -219,15 +228,24 @@ class PaymentService:
             return "duplicate_refunded"
 
         booking = self.booking_modal.read_one(connection, booking_id)
+<<<<<<< HEAD
         if booking["status"] == "PENDING" and not booking.get("provider_id") \
                 and booking.get("payment_mode") == "PAY_NOW":
             # "Pay now" bookings are held back from workers until this moment.
             # mark_paid above only succeeds once, so verify + webhook dispatch once.
+=======
+        if booking["status"] == "PENDING" and not booking.get("provider_id"):
+            # Pay-first: only now does the job reach workers (list + "New Job" push).
+>>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
             from bookings.bookings_service import BookingsService
             try:
                 BookingsService().dispatch(connection, booking)
             except Exception as e:
                 print(f"[Payment] Dispatch after payment failed (non-fatal): {e}")
+<<<<<<< HEAD
+=======
+            booking = self.booking_modal.read_one(connection, booking_id)  # may be assigned now
+>>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
         self.credit_provider_for_booking(connection, booking_id)
         provider_user = self._provider_user_id(connection, booking)
         self._push(connection, [booking["customer_id"]], "Payment Confirmed",
@@ -294,6 +312,7 @@ class PaymentService:
         if not self.booking_modal.claim_earning_credit(connection, booking_id):
             return 0
         booking = self.booking_modal.read_one(connection, booking_id)
+<<<<<<< HEAD
         if (self.modal.has_entry(connection, booking_id, "CASH_FEE")
                 and not self.modal.has_entry(connection, booking_id, "CASH_FEE_REVERSAL")):
             # Settled as cash at completion, then the online payment landed after all:
@@ -304,24 +323,33 @@ class PaymentService:
         # Earlier cancellation fees in the total belong to another worker.
         total = int(booking.get("total_amount") or 0) - int(booking.get("dues_collected") or 0)
         fee = int(booking.get("platform_fee") or 0) or platform_fee_for(total)
+=======
+        # Coupons, coins and plan discounts are funded by the platform: the worker's
+        # share is on the full job price (sub_total), not on what the customer paid.
+        base = int(booking.get("sub_total") or 0) or int(booking.get("total_amount") or 0)
+        fee = int(booking.get("platform_fee") or 0) or platform_fee_for(base)
+>>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
         payment = self.modal.find_payment(connection, payment_id=booking.get("payment_id"))
         refunded = int((payment or {}).get("refund_amount") or 0)
-        if refunded and total:
-            # Part of the bill was refunded: worker and platform share what was kept.
-            kept = max(0, total - refunded)
-            fee = int(fee * kept / total)
-            total = kept
-        earning = max(0, total - fee)
+        if refunded and base:
+            # Part of the bill was refunded before completion: share only what was kept.
+            kept = max(0, base - refunded)
+            fee = int(fee * kept / base)
+            base = kept
+        earning = max(0, base - fee)
         if earning:
             self.modal.add_earning(connection, booking["provider_id"], booking_id, earning)
             self.provider_modal.update_wallet(connection, booking["provider_id"], earning)
         return earning
 
-    def reverse_provider_earning(self, connection, booking) -> int:
-        """Booking refunded/cancelled after the worker was credited: take it back."""
+    def reverse_provider_earning(self, connection, booking, limit=None) -> int:
+        """Booking refunded/cancelled after the worker was credited: take it back
+        (at most `limit` paise when given)."""
         if not booking.get("provider_id"):
             return 0
         net = self.modal.net_earning(connection, booking["booking_id"], booking["provider_id"])
+        if limit is not None:
+            net = min(net, int(limit))
         if net <= 0:
             return 0
         # Same convention as other deductions: positive amount, type DEDUCTION.
@@ -412,8 +440,13 @@ class PaymentService:
         if not payment or payment["status"] not in ("PAID", "PARTIALLY_REFUNDED", "REFUND_FAILED"):
             raise ValueError("No paid payment found")
         refunded = self.refund(connection, payment, data.amount, data.reason or "Refund by support")
+        clawed = 0
+        if data.deduct_from_worker and payment.get("booking_id"):
+            # Admin's choice: the worker bears this refund (up to what they were credited).
+            booking = self.booking_modal.read_one(connection, payment["booking_id"])
+            clawed = self.reverse_provider_earning(connection, booking, limit=refunded)
         fresh = self.modal.find_payment(connection, payment_id=payment["payment_id"])
-        return "success", {"message": "Refund initiated", "refunded": refunded,
+        return "success", {"message": "Refund initiated", "refunded": refunded, "deducted_from_worker": clawed,
                            "refund_amount": fresh["refund_amount"], "status": fresh["status"]}
 
     # ── Razorpay webhook ─────────────────────────────────────────────────────
