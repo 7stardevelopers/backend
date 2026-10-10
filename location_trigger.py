@@ -3,7 +3,8 @@ CloudWatch EventBridge triggers this every 15 minutes.
 Finds bookings scheduled within the next 75 minutes and sends live-tracking push notifications,
 nudges workers whose location sharing stopped mid-trip, and reminds customers
 to confirm jobs the worker marked done (bookings/completion_reminders.py), and
-cancels bookings left unpaid (bookings/unpaid_expiry.py).
+cancels bookings left unpaid (bookings/unpaid_expiry.py), and queues the
+twice-weekly worker payouts (finance/auto_payouts.py).
 """
 import traceback
 
@@ -26,6 +27,9 @@ def handler(event, context):
         with get_connection() as conn:
             from bookings.unpaid_expiry import expire_unpaid
             expire_unpaid(conn)
+        with get_connection() as conn:
+            from finance.auto_payouts import run_payout_batch
+            run_payout_batch(conn)
         return {"statusCode": 200, "body": "OK"}
     except Exception as e:
         print(f"[LocationTrigger] Error: {e}")

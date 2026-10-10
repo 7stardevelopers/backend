@@ -35,7 +35,7 @@ class PaymentMaster:
         row = conn.execute(sel).fetchone()
         return dict(row._mapping) if row else None
 
-    def find_open_order(self, conn, customer_id: str, amount: int, booking_id=None, plan_id=None):
+    def find_open_order(self, conn, customer_id: str, amount: int, booking_id=None, plan_id=None, purpose=None):
         """A still-unpaid order for the same thing and amount — reused instead of
         opening a new Razorpay order on every tap of "Pay"."""
         sel = (self.pay.select()
@@ -45,6 +45,8 @@ class PaymentMaster:
                .order_by(self.pay.c.created_at.desc()))
         if booking_id:
             sel = sel.where(self.pay.c.booking_id == booking_id)
+        elif purpose == "WORKER_DUES":
+            sel = sel.where(self.pay.c.purpose == "WORKER_DUES")
         else:
             sel = sel.where(self.pay.c.plan_id == plan_id).where(self.pay.c.purpose == "SUBSCRIPTION")
         row = conn.execute(sel).fetchone()
@@ -136,13 +138,17 @@ class PaymentMaster:
         rows = conn.execute(sel).fetchall()
         return [dict(r._mapping) for r in rows]
 
-    def has_earning(self, conn, booking_id: str, earning_type: str = "BOOKING") -> bool:
-        row = conn.execute(
+    def earnings_total(self, conn, booking_id: str, earning_type: str) -> int:
+        return int(conn.execute(text(
+            "SELECT COALESCE(SUM(amount), 0) FROM provider_earnings WHERE booking_id = :bid AND type = :t"
+        ), {"bid": booking_id, "t": earning_type}).scalar() or 0)
+
+    def has_entry(self, conn, booking_id: str, earning_type: str) -> bool:
+        return conn.execute(
             self.earnings.select()
             .where(self.earnings.c.booking_id == booking_id)
             .where(self.earnings.c.type == earning_type)
-        ).fetchone()
-        return row is not None
+        ).fetchone() is not None
 
     def add_earning(self, conn, provider_id: str, booking_id: str, amount: int, earning_type: str = "BOOKING"):
         conn.execute(self.earnings.insert().values(

@@ -1,11 +1,6 @@
 import hmac
-<<<<<<< HEAD
 import json
-import os
-import razorpay
-=======
->>>>>>> f42a2ddc30334fb4703d1d583b930d0dacc4a83d
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 
 from bookings.bookings_modal import BookingsMaster
@@ -15,6 +10,7 @@ from bookings.bookings_validator import (
 from bookings.booking_pricing import price_booking, apply_booking_side_effects, release_booking_side_effects
 from notifications.notifications_service import NotificationsService
 from payments.payment_service import platform_fee_for
+from payments.money_rules import CANCEL_FEE, CANCEL_GRACE_MIN, CASH_DUES_LIMIT
 from providers.provider_matching import match_provider
 from providers.providers_modal import ProvidersMaster, is_registered_worker, WORKER_CANNOT_BOOK
 from utilities.common_table_elements import new_uuid, now_utc
@@ -97,28 +93,38 @@ class BookingsService:
             "sub_total": pricing["sub_total"],
             "discount": pricing["discount"],
             "total_amount": pricing["total_amount"],
-            "platform_fee": platform_fee_for(pricing["total_amount"]),
+            # Earlier cancellation fees in the total belong to that job's worker, not this one.
+            "platform_fee": platform_fee_for(pricing["total_amount"] - pricing["previous_dues"]),
+            "dues_collected": pricing["previous_dues"],
             "coupon_id": validated.coupon_id if pricing["coupon"] else None,
             "is_instant": validated.is_instant,
             "customer_notes": validated.customer_notes,
             "requested_provider_id": validated.requested_provider_id,
             "status": "PENDING",
             "payment_status": "PENDING",
+            # Nothing to pay → nothing to wait for.
+            "payment_mode": validated.payment_mode if pricing["total_amount"] > 0 else "PAY_AFTER",
         }
         booking = self.modal.create(connection, booking_data)
         apply_booking_side_effects(connection, user_id, booking["booking_id"], pricing)
         if pricing["items"]:
             self.modal.create_items(connection, booking["booking_id"], pricing["items"])
 
-        # Workers only see a job once it is paid; a fully covered (₹0) booking
-        # has nothing to pay, so it goes out right away. Otherwise dispatch()
-        # runs from PaymentService.verify_payment.
+        # "Pay after job" goes to workers right away; "Pay now" waits until the
+        # payment is confirmed (PaymentService.confirm_payment calls dispatch()).
         if is_dispatchable(booking):
             booking = self.dispatch(connection, booking)
 
         booking["coins_used"] = pricing["coins_used"]
+        booking["previous_dues"] = pricing["previous_dues"]
         self._hide_door_otp(booking, role)
         return "created", booking
+
+    def get_dues(self, obj, connection):
+        """GET /bookings/dues — cancellation fees the customer's next booking will include."""
+        user_id = obj.pop("_user_id")
+        obj.pop("_role", None)
+        return "success", {"previous_dues": self.modal.due_cancel_fees(connection, user_id)}
 
     def dispatch(self, connection, booking):
         """Offer a paid (or ₹0) PENDING booking to workers and confirm it to the customer."""
@@ -300,6 +306,11 @@ class BookingsService:
         except Exception:
             booking["review"] = None
             booking["provider_review"] = None
+        if role == "CUSTOMER":
+            # Lets the app warn before a late cancel ("A ₹50 fee applies").
+            booking["cancel_fee_if_cancelled"] = cancellation_fee_for(booking)
+            booking["cancel_free_until"] = cancel_free_until(booking)
+            booking["cancel_fee_amount"] = CANCEL_FEE  # charged once cancel_free_until has passed
         self._hide_door_otp(booking, role)
         return "success", booking
 
@@ -377,6 +388,8 @@ class BookingsService:
         provider = prov_master.find_by_user_id(connection, user_id)
         if not provider or provider.get("status") != "APPROVED":
             return "success", []
+        if is_blocked_for_dues(provider):
+            return "success", []  # the app shows "clear your dues" from /providers/me/earnings
 
         lat = obj.get("lat")
         lng = obj.get("lng")
@@ -409,6 +422,9 @@ class BookingsService:
             raise ValueError("Provider profile not found")
         if provider.get("status") != "APPROVED":
             raise PermissionError("Your provider account is not approved yet")
+        if is_blocked_for_dues(provider):
+            raise PermissionError(f"You owe ₹{-int(provider.get('wallet_balance') or 0) // 100} from cash jobs — "
+                                  "clear your dues in Earnings to get new jobs")
         target = self.modal.read_one(connection, booking_id)
         if target and str(target.get("customer_id")) == str(user_id):
             raise PermissionError("You can't accept your own booking")
@@ -448,18 +464,14 @@ class BookingsService:
             raise ValueError(f"Cannot transition from {booking['status']} to {new_status}")
         if new_status == "CANCELLED":
             # Same path as POST /cancel so refunds/notifications always run
-            updated = self._do_cancel(connection, booking)
+            fee = cancellation_fee_for(booking) if role == "CUSTOMER" else 0
+            updated = self._do_cancel(connection, booking, fee=fee)
             self._hide_door_otp(updated, role)
             return "success", updated
         updated = self.modal.update_status(connection, booking_id, new_status, expected_status=booking["status"])
-<<<<<<< HEAD
-        if new_status == "COMPLETED":
-            self._credit_earning(connection, updated)
-=======
         if new_status == "COMPLETED":  # admin force-complete
             from payments.payment_service import PaymentService
-            PaymentService().credit_provider_for_booking(connection, booking_id)
->>>>>>> f42a2ddc30334fb4703d1d583b930d0dacc4a83d
+            PaymentService().settle_completed_booking(connection, booking_id)
         self._notify_status_change(connection, updated, new_status)
         self._hide_door_otp(updated, role)
         return "success", updated
@@ -486,9 +498,12 @@ class BookingsService:
             return "success", {"message": "Booking completed", "status": "COMPLETED"}
         # The customer still has to confirm in their own app — never a code the
         # worker could ask for and type in.
+        body = "Please check the work and tap \"Work done\" to confirm."
+        if booking.get("payment_status") != "PAID" and int(booking.get("total_amount") or 0) > 0:
+            body = ("Please check the work, pay by cash to your expert or online in the app, "
+                    "then tap \"Work done\".")
         self._push(connection, [booking["customer_id"]],
-                   "Your expert marked the job done",
-                   "Please check the work and tap \"Work done\" to confirm.",
+                   "Your expert marked the job done", body,
                    {"type": "completion_requested", "booking_id": booking_id})
         return "success", {"message": "Waiting for the customer to confirm",
                            "status": "IN_PROGRESS", "waiting_for": "customer"}
@@ -556,31 +571,12 @@ class BookingsService:
 
     def _on_completed(self, connection, booking_id):
         from payments.payment_service import PaymentService
-        PaymentService().credit_provider_for_booking(connection, booking_id)
+        PaymentService().settle_completed_booking(connection, booking_id)
         booking = self.modal.read_one(connection, booking_id)
-        self._credit_earning(connection, booking)
         self._notify_status_change(connection, booking, "COMPLETED")
         self._push(connection, [self._provider_user_id(connection, booking)],
                    "Job completed", "Both sides confirmed. Your earnings are updated.",
                    {"type": "booking_update", "booking_id": booking_id, "status": "COMPLETED"})
-
-    @staticmethod
-    def _credit_earning(connection, booking):
-        # Payment is taken before a worker is assigned, so the worker's share
-        # is credited here, once, when the job is actually done.
-        if booking.get("payment_status") != "PAID" or not booking.get("provider_id"):
-            return
-        pay_modal = PaymentMaster()
-        if pay_modal.has_earning(connection, booking["booking_id"]):
-            return
-        payment = pay_modal.find_payment(connection, payment_id=booking.get("payment_id")) if booking.get("payment_id") else None
-        total = int((payment or {}).get("amount") or booking.get("total_amount") or 0)
-        if total <= 0:
-            return
-        from payments.payment_service import PLATFORM_FEE_PCT
-        earning = total - int(total * PLATFORM_FEE_PCT / 100)
-        pay_modal.add_earning(connection, booking["provider_id"], booking["booking_id"], earning)
-        ProvidersMaster().update_wallet(connection, booking["provider_id"], earning)
 
     @staticmethod
     def _provider_user_id(connection, booking):
@@ -605,9 +601,13 @@ class BookingsService:
             raise PermissionError("Access denied")
         if booking["status"] not in ("PENDING", "ACCEPTED"):
             raise ValueError(f"Cannot cancel booking in {booking['status']} status")
-        return "success", self._do_cancel(connection, booking)
+        # Rapido-style: free until a worker accepts + a short grace period; admin cancels are free.
+        fee = cancellation_fee_for(booking) if str(booking.get("customer_id")) == str(user_id) else 0
+        updated = self._do_cancel(connection, booking, fee=fee)
+        updated["cancellation_fee"] = fee
+        return "success", updated
 
-    def _do_cancel(self, connection, booking):
+    def _do_cancel(self, connection, booking, fee: int = 0):
         booking_id = booking["booking_id"]
         updated = self.modal.update_status(
             connection, booking_id, "CANCELLED", expected_status=booking["status"]
@@ -618,11 +618,14 @@ class BookingsService:
             try:
                 prov = ProvidersMaster().find_by_id(connection, booking["provider_id"])
                 if prov:
+                    body = "A booking assigned to you has been cancelled."
+                    if fee:
+                        body = f"The customer cancelled late — you'll receive ₹{fee // 100} as a cancellation fee."
                     self.notif.send_push(
                         connection=connection,
                         user_ids=[prov["user_id"]],
                         title="Booking Cancelled",
-                        body="A booking assigned to you has been cancelled.",
+                        body=body,
                         data={"type": "booking_update", "booking_id": booking_id, "status": "CANCELLED"},
                     )
             except Exception as e:
@@ -631,7 +634,22 @@ class BookingsService:
         # Refund an online payment and take back anything already credited to the worker.
         # Re-read: a payment may have landed between our read and the cancel.
         from payments.payment_service import PaymentService
-        PaymentService().refund_booking_on_cancel(connection, self.modal.read_one(connection, booking_id))
+        pay = PaymentService()
+        fresh = self.modal.read_one(connection, booking_id)
+        if fee and fresh.get("provider_id"):
+            if fresh.get("payment_status") in ("PAID", "PARTIALLY_REFUNDED"):
+                # Paid online: keep the fee out of the refund and pay the worker now.
+                kept = pay.refund_booking_on_cancel(connection, fresh, keep=fee)
+                if kept:
+                    pay.credit_cancel_fee(connection, fresh["provider_id"], booking_id, kept)
+                    self.modal.set_cancel_fee(connection, booking_id, kept, "COLLECTED")
+            else:
+                # Unpaid: the customer's next booking carries it (booking_pricing.previous_dues).
+                pay.refund_booking_on_cancel(connection, fresh)
+                self.modal.set_cancel_fee(connection, booking_id, fee, "DUE")
+            updated = self.modal.read_one(connection, booking_id)
+        else:
+            pay.refund_booking_on_cancel(connection, fresh)
 
         return updated
 
@@ -769,9 +787,43 @@ class BookingsService:
                 print(f"[Notify] Status notification failed (non-fatal): {e}")
 
 
+def _as_utc(ts):
+    if ts is None:
+        return None
+    if isinstance(ts, str):
+        ts = datetime.fromisoformat(ts)
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+
+
+def cancel_free_until(booking):
+    """ISO time until which the customer may cancel for free (None = no grace clock running)."""
+    accepted = _as_utc(booking.get("accepted_at"))
+    if booking.get("status") != "ACCEPTED" or not accepted:
+        return None
+    return (accepted + timedelta(minutes=CANCEL_GRACE_MIN)).isoformat().replace("+00:00", "Z")
+
+
+def cancellation_fee_for(booking) -> int:
+    """Fee for the customer cancelling now: free while an expert is being found
+    and for CANCEL_GRACE_MIN after one accepts, then CANCEL_FEE."""
+    accepted = _as_utc(booking.get("accepted_at"))
+    if booking.get("status") != "ACCEPTED" or not accepted or not booking.get("provider_id"):
+        return 0
+    if datetime.now(timezone.utc) - accepted <= timedelta(minutes=CANCEL_GRACE_MIN):
+        return 0
+    return CANCEL_FEE
+
+
+def is_blocked_for_dues(provider) -> bool:
+    """Worker owes CASH_DUES_LIMIT or more (fees on cash jobs): no new jobs until paid."""
+    return int(provider.get("wallet_balance") or 0) <= -CASH_DUES_LIMIT
+
+
 def is_dispatchable(booking) -> bool:
-    """A PENDING booking may be shown to workers only once it is paid or costs nothing."""
-    return booking.get("payment_status") == "PAID" or int(booking.get("total_amount") or 0) == 0
+    """May workers see this PENDING booking? "Pay after job" always; "Pay now" once paid."""
+    return (booking.get("payment_mode") != "PAY_NOW"
+            or booking.get("payment_status") == "PAID"
+            or int(booking.get("total_amount") or 0) == 0)
 
 
 def _is_approved_provider(connection, user_id) -> bool:

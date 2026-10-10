@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime, timezone
 
 
@@ -30,6 +30,9 @@ class CreateBookingSchema(BaseModel):
     items: Optional[List[dict]] = None
     requested_provider_id: Optional[str] = None
     coins_used: int = Field(0, ge=0)
+    # PAY_NOW: online at booking, workers see the job once it's paid.
+    # PAY_AFTER: cash or online once the work is done, workers see it at once.
+    payment_mode: Literal["PAY_NOW", "PAY_AFTER"] = "PAY_AFTER"
 
 
 class UpdateStatusSchema(BaseModel):

@@ -9,6 +9,8 @@ Order of application (mirrors Customer app create.jsx):
   subscription discount_pct → off sub_total (only while bookings_included remain)
   coins      → 1 coin = ₹1 (100 paise), capped at what's left
   total      = sub_total − coupon − subscription − coins×100   (never below 0, paise)
+  + previous_dues: cancellation fees the customer still owes from late cancels
+    (added after discounts — coupons and coins never reduce them)
 """
 from datetime import datetime, timezone
 from sqlalchemy import text
@@ -68,11 +70,15 @@ def price_booking(conn, user_id: str, service_id: str, items=None, coupon_id=Non
             raise ValueError("You don't have enough coins for this redemption")
         coins = min(int(coins_used), after_discount // COIN_VALUE_PAISE)
 
+    from bookings.bookings_modal import BookingsMaster
+    previous_dues = BookingsMaster().due_cancel_fees(conn, user_id)
+
     return {
         "sub_total": sub_total,
         "discount": discount,
         "coins_used": coins,
-        "total_amount": max(0, after_discount - coins * COIN_VALUE_PAISE),
+        "previous_dues": previous_dues,
+        "total_amount": max(0, after_discount - coins * COIN_VALUE_PAISE) + previous_dues,
         "items": priced_items,
         "coupon": coupon,
         "subscription": subscription,
@@ -95,6 +101,11 @@ def apply_booking_side_effects(conn, user_id: str, booking_id: str, pricing: dic
         from referrals.referrals_modal import ReferralsMaster
         if not ReferralsMaster().debit(conn, user_id, pricing["coins_used"], "BOOKING_REDEMPTION", booking_id):
             raise ValueError("Could not redeem coins — balance changed. Please try again.")
+
+    if pricing.get("previous_dues"):
+        from bookings.bookings_modal import BookingsMaster
+        if BookingsMaster().reserve_cancel_fees(conn, user_id, booking_id) != pricing["previous_dues"]:
+            raise ValueError("Your pending cancellation fees changed — please try again.")
 
 
 def calculate_coupon_discount(coupon: dict, cart_total: int) -> int:
@@ -178,6 +189,8 @@ def release_booking_side_effects(conn, booking: dict):
     coupon use, the subscription booking and any coins spent."""
     booking_id = booking["booking_id"]
     user_id = booking["customer_id"]
+    from bookings.bookings_modal import BookingsMaster
+    BookingsMaster().release_cancel_fees(conn, booking_id)  # owed again on the next booking
     released = conn.execute(text(
         "DELETE FROM coupon_uses WHERE booking_id = :bid"
     ), {"bid": booking_id}).rowcount

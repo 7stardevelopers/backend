@@ -1,6 +1,7 @@
 from sqlalchemy import text
 from utilities.db_connection import get_table
 from utilities.common_table_elements import new_uuid, now_utc
+from payments.money_rules import CASH_DUES_LIMIT, PAYOUT_MIN
 
 
 WORKER_CANNOT_BOOK = (
@@ -140,7 +141,9 @@ class ProvidersMaster:
             WHERE p.status = 'APPROVED'
               AND p.is_available = TRUE
               AND ps.service_id = :sid
-        """), {"sid": service_id})
+              -- owes the dues limit from cash jobs → no new jobs until paid
+              AND COALESCE(p.wallet_balance, 0) > -:dues_limit
+        """), {"sid": service_id, "dues_limit": CASH_DUES_LIMIT})
         return [dict(r._mapping) for r in result.fetchall()]
 
     def update_rating(self, conn, provider_id: str, new_rating: float, total_reviews: int):
@@ -182,8 +185,9 @@ class ProvidersMaster:
 
         stats = dict(conn.execute(text("""
             SELECT
-              COALESCE(SUM(CASE WHEN type != 'DEDUCTION' THEN amount ELSE 0 END), 0) AS total_earned,
-              COALESCE(SUM(CASE WHEN type = 'DEDUCTION'  THEN amount ELSE 0 END), 0) AS total_deducted,
+              COALESCE(SUM(CASE WHEN type IN ('BOOKING', 'CANCEL_FEE', 'CASH_FEE_REVERSAL')
+                                THEN amount ELSE 0 END), 0) AS total_earned,
+              COALESCE(SUM(CASE WHEN type IN ('DEDUCTION', 'CASH_FEE') THEN amount ELSE 0 END), 0) AS total_deducted,
               COUNT(*) AS total_entries
             FROM provider_earnings
             WHERE provider_id = :pid
@@ -198,6 +202,14 @@ class ProvidersMaster:
         ), {"pid": provider_id}).scalar() or 0
         stats["pending_payouts"] = int(reserved)
         stats["available_balance"] = max(0, int(balance) - int(reserved))
+        # Fees on cash jobs push the wallet below zero; at the limit new jobs stop.
+        stats["wallet_balance"] = int(balance)
+        stats["dues"] = max(0, -int(balance))
+        stats["dues_limit"] = CASH_DUES_LIMIT
+        stats["jobs_blocked"] = int(balance) <= -CASH_DUES_LIMIT
+        from finance.auto_payouts import next_payout_date
+        stats["next_payout_date"] = next_payout_date().isoformat()
+        stats["payout_min"] = PAYOUT_MIN
         return {"items": [dict(r) for r in rows], "stats": stats}
 
     def list_all_detailed(self, conn, status=None, page=1, per_page=20):

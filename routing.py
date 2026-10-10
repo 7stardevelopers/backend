@@ -79,6 +79,7 @@ ROUTES = [
     ("GET",  "/bookings",                        _books.list_mine,                 []),
     ("GET",  "/bookings/available",              _books.list_available_for_provider, []),
     ("GET",  "/bookings/past-providers",         _books.list_past_providers,         []),
+    ("GET",  "/bookings/dues",                   _books.get_dues,                    []),
     ("PATCH",r"/bookings/(?P<id>[^/]+)/accept",  _books.accept_booking,             ["id"]),
     ("GET",  r"/bookings/(?P<id>[^/]+)$",        _books.get_detail,                 ["id"]),
     ("GET",  r"/bookings/(?P<id>[^/]+)/eta",     _books.get_eta,                    ["id"]),
@@ -142,6 +143,8 @@ ROUTES = [
     ("POST", "/providers/me/temp-approve",  _prov.temp_self_approve,     []),   # TEMPORARY — remove after testing
     ("PATCH","/providers/me/location",      _prov.update_location,       []),
     ("GET",  "/providers/me/earnings",      _prov.get_my_earnings,       []),
+    ("POST", "/providers/me/dues/order",    _pay.dues_order,             []),
+    ("POST", "/providers/me/dues/verify",   _pay.dues_verify,            []),
     ("GET",  "/providers/nearby",           _prov.get_nearby,            []),
     ("GET",  "/providers",                  _prov.admin_list_detailed,   []),
     ("GET",  "/admin/providers/locations",  _prov.admin_list_locations,  []),
@@ -215,6 +218,7 @@ ROUTES = [
     # FINANCE
     ("GET",  "/finance/overview",           _fin.overview,               []),
     ("GET",  "/finance/payouts",            _fin.payout_queue,           []),
+    ("PATCH","/finance/payouts/bulk",       _fin.bulk_update_payouts,    []),
     ("PATCH",r"/finance/payouts/(?P<id>[^/]+)", _fin.approve_payout,     ["id"]),
     ("GET",  "/finance/reports",            _fin.export_report,          []),
 

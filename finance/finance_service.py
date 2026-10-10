@@ -57,6 +57,28 @@ class FinanceService:
             ProvidersMaster().update_wallet(connection, payout["provider_id"], payout["amount"], "debit")
         return "success", {"message": f"Payout {data.status.lower()}"}
 
+    def bulk_update_payouts(self, obj, connection):
+        """PATCH /finance/payouts/bulk {payout_ids: [...], status, notes?} — e.g. mark a
+        whole scheduled batch PROCESSED after the bank transfer. Each id goes through
+        approve_payout, so the same transitions and wallet debits apply."""
+        role = obj.pop("_role", None)
+        user_id = obj.pop("_user_id", None)
+        self._require_finance(role)
+        ids = obj.get("payout_ids") or []
+        if not isinstance(ids, list) or not ids:
+            raise ValueError("payout_ids must be a non-empty list")
+        if len(ids) > 200:
+            raise ValueError("At most 200 payouts at a time")
+        done, failed = [], []
+        for pid in ids:
+            try:
+                self.approve_payout({"_role": role, "_user_id": user_id, "id": pid,
+                                     "status": obj.get("status"), "notes": obj.get("notes")}, connection)
+                done.append(pid)
+            except ValueError as e:
+                failed.append({"payout_id": pid, "error": str(e)})
+        return "success", {"updated": done, "failed": failed}
+
     def export_report(self, obj, connection):
         self._require_finance(obj.pop("_role", None))
         obj.pop("_user_id", None)

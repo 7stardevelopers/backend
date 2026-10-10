@@ -235,8 +235,9 @@ class BookingsMaster:
             LEFT JOIN user_addresses ua ON ua.address_id = b.address_id
             WHERE b.status = 'PENDING'
               AND b.provider_id IS NULL
-              -- only paid (or fully covered) jobs reach workers
-              AND (b.payment_status = 'PAID' OR b.total_amount = 0)
+              -- "Pay now" jobs reach workers only once paid (see is_dispatchable)
+              AND (COALESCE(b.payment_mode, 'PAY_AFTER') <> 'PAY_NOW'
+                   OR b.payment_status = 'PAID' OR b.total_amount = 0)
               AND ps.provider_id = :pid
               -- never offer a worker their own bookings (made before they registered)
               AND b.customer_id <> (SELECT user_id FROM providers WHERE provider_id = :pid)
@@ -333,7 +334,58 @@ class BookingsMaster:
             .where(self.t.c.booking_id == booking_id)
             .where(self.t.c.status == "PENDING")
             .where(self.t.c.provider_id == None)
-            .where(or_(self.t.c.payment_status == "PAID", self.t.c.total_amount == 0))
-            .values(provider_id=provider_id, status="ACCEPTED", updated_at=now_utc())
+            .where(or_(self.t.c.payment_mode != "PAY_NOW",
+                       self.t.c.payment_status == "PAID", self.t.c.total_amount == 0))
+            .values(provider_id=provider_id, status="ACCEPTED", accepted_at=now_utc(), updated_at=now_utc())
         )
         return result.rowcount > 0
+
+    # ── Cancellation fees owed by customers ─────────────────────────────────
+    # A late cancel leaves the fee on the cancelled booking (DUE). The customer's
+    # next booking carries it in its total (COLLECTING, cancel_fee_booking_id =
+    # that booking) and it is COLLECTED — paid to the worker — once that job is done.
+
+    def set_cancel_fee(self, conn, booking_id: str, fee: int, status: str):
+        conn.execute(self.t.update().where(self.t.c.booking_id == booking_id)
+                     .values(cancellation_fee=fee, cancel_fee_status=status, updated_at=now_utc()))
+
+    def due_cancel_fees(self, conn, customer_id: str) -> int:
+        return int(conn.execute(text(
+            "SELECT COALESCE(SUM(cancellation_fee), 0) FROM bookings "
+            "WHERE customer_id = :cid AND cancel_fee_status = 'DUE'"
+        ), {"cid": customer_id}).scalar() or 0)
+
+    def reserve_cancel_fees(self, conn, customer_id: str, booking_id: str) -> int:
+        """Attach every DUE fee to `booking_id`; returns the total attached."""
+        conn.execute(text(
+            "UPDATE bookings SET cancel_fee_status = 'COLLECTING', cancel_fee_booking_id = :bid "
+            "WHERE customer_id = :cid AND cancel_fee_status = 'DUE'"
+        ), {"cid": customer_id, "bid": booking_id})
+        return int(conn.execute(text(
+            "SELECT COALESCE(SUM(cancellation_fee), 0) FROM bookings "
+            "WHERE cancel_fee_booking_id = :bid AND cancel_fee_status = 'COLLECTING'"
+        ), {"bid": booking_id}).scalar() or 0)
+
+    def release_cancel_fees(self, conn, booking_id: str):
+        """The booking carrying the fees was cancelled: they are owed again."""
+        conn.execute(text(
+            "UPDATE bookings SET cancel_fee_status = 'DUE', cancel_fee_booking_id = NULL "
+            "WHERE cancel_fee_booking_id = :bid AND cancel_fee_status = 'COLLECTING'"
+        ), {"bid": booking_id})
+
+    def collect_cancel_fees(self, conn, booking_id: str) -> list:
+        """COLLECTING → COLLECTED for the fees `booking_id` carried; returns the rows
+        this call settled (each row only once, even if called twice)."""
+        rows = conn.execute(text(
+            "SELECT booking_id, provider_id, cancellation_fee FROM bookings "
+            "WHERE cancel_fee_booking_id = :bid AND cancel_fee_status = 'COLLECTING'"
+        ), {"bid": booking_id}).mappings().fetchall()
+        settled = []
+        for r in rows:
+            done = conn.execute(text(
+                "UPDATE bookings SET cancel_fee_status = 'COLLECTED' "
+                "WHERE booking_id = :id AND cancel_fee_status = 'COLLECTING'"
+            ), {"id": r["booking_id"]}).rowcount
+            if done:
+                settled.append(dict(r))
+        return settled

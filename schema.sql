@@ -565,6 +565,16 @@ CALL _add_column('bookings', 'door_otp_generated_at', 'TIMESTAMP NULL');
 
 -- (Phase 2, item 6) book again, same person
 CALL _add_column('bookings', 'requested_provider_id', 'CHAR(36) NULL');
+
+-- (migrations/006) customer picks PAY_NOW (online, dispatched once paid) or PAY_AFTER (cash/online after the job)
+CALL _add_column('bookings', 'payment_mode', "VARCHAR(10) NOT NULL DEFAULT 'PAY_AFTER'");
+
+-- (migrations/007) worker money: cancellation charge + when the job was accepted
+CALL _add_column('bookings', 'accepted_at',           'TIMESTAMP NULL');
+CALL _add_column('bookings', 'cancellation_fee',      'INT NOT NULL DEFAULT 0');
+CALL _add_column('bookings', 'cancel_fee_status',     'VARCHAR(12) NULL');
+CALL _add_column('bookings', 'cancel_fee_booking_id', 'CHAR(36) NULL');
+CALL _add_column('bookings', 'dues_collected',        'INT NOT NULL DEFAULT 0');
 CALL _add_constraint('bookings', 'fk_bookings_requested_provider',
   'FOREIGN KEY (requested_provider_id) REFERENCES providers(provider_id)');
 

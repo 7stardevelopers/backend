@@ -57,16 +57,6 @@ class PaymentService:
         if role != "CUSTOMER":
             raise PermissionError("Only customers can create payment orders")
         data = CreateOrderSchema(**obj)
-<<<<<<< HEAD
-        booking = self.booking_modal.read_one(connection, data.booking_id)
-        if str(booking["customer_id"]) != str(user_id):
-            raise PermissionError("Access denied")
-        if booking.get("payment_status") == "PAID":
-            raise ValueError("This booking is already paid")
-        if booking["status"] == "CANCELLED":
-            raise ValueError("This booking was cancelled — please book again")
-=======
->>>>>>> f42a2ddc30334fb4703d1d583b930d0dacc4a83d
 
         if data.booking_id:
             booking = self.booking_modal.read_one(connection, data.booking_id)
@@ -142,38 +132,6 @@ class PaymentService:
         if data.plan_id and str(payment.get("plan_id")) != str(data.plan_id):
             raise ValueError("Plan does not match this payment order")
 
-<<<<<<< HEAD
-        # The app may retry verify (flaky network); only the first call acts.
-        if payment["status"] == "PAID":
-            return "success", {"message": "Payment verified", "payment_id": payment["payment_id"]}
-
-        self.modal.update_payment(connection, payment["payment_id"], {
-            "razorpay_payment_id": data.razorpay_payment_id,
-            "status": "PAID",
-        })
-        self.booking_modal.update_payment(connection, data.booking_id, payment["payment_id"], "PAID")
-        booking = self.booking_modal.read_one(connection, data.booking_id)
-
-        from bookings.bookings_service import BookingsService
-        if booking["status"] == "CANCELLED":
-            # Cancelled (by the customer or the unpaid-booking expiry) while
-            # the payment was in flight — give the money straight back.
-            try:
-                _get_razorpay_client().payment.refund(data.razorpay_payment_id, {"amount": payment["amount"]})
-                self.modal.update_payment(connection, payment["payment_id"], {"status": "REFUNDED"})
-            except Exception as e:
-                print(f"[Payment] Refund for cancelled booking failed (non-fatal): {e}")
-            return "success", {"message": "Booking was cancelled — payment refunded",
-                               "payment_id": payment["payment_id"], "refunded": True}
-
-        # Only now does the job reach workers (list + "New Job" push).
-        if booking["status"] == "PENDING" and not booking.get("provider_id"):
-            try:
-                BookingsService().dispatch(connection, booking)
-            except Exception as e:
-                print(f"[Payment] Dispatch after payment failed (non-fatal): {e}")
-
-=======
         if self._is_extra_payment(payment, data.razorpay_payment_id):
             self._release_extra_payment(payment, data.razorpay_payment_id)
             return "success", {"message": "This was already paid — the extra payment is being refunded.",
@@ -183,7 +141,6 @@ class PaymentService:
         if outcome == "duplicate_refunded":
             return "success", {"message": "This was already paid — the extra payment is being refunded.",
                                "payment_id": payment["payment_id"], "refunded": True}
->>>>>>> f42a2ddc30334fb4703d1d583b930d0dacc4a83d
         return "success", {"message": "Payment verified", "payment_id": payment["payment_id"]}
 
     @staticmethod
@@ -235,6 +192,16 @@ class PaymentService:
             return "already"
         payment = self.modal.find_payment(connection, payment_id=payment["payment_id"])
 
+        if payment.get("purpose") == "WORKER_DUES":
+            provider = self.provider_modal.find_by_user_id(connection, payment["customer_id"])
+            if provider:
+                self.modal.add_earning(connection, provider["provider_id"], None, int(payment["amount"]), "DUES_PAID")
+                self.provider_modal.update_wallet(connection, provider["provider_id"], int(payment["amount"]))
+            self._push(connection, [payment["customer_id"]], "Dues cleared",
+                       "Thanks! Your dues are paid — you can take new jobs again.",
+                       {"type": "dues_paid"})
+            return "paid"
+
         if payment.get("purpose") == "SUBSCRIPTION":
             from subscriptions.subscriptions_modal import SubscriptionsMaster
             SubscriptionsMaster().create_subscription(connection, payment["customer_id"],
@@ -252,6 +219,15 @@ class PaymentService:
             return "duplicate_refunded"
 
         booking = self.booking_modal.read_one(connection, booking_id)
+        if booking["status"] == "PENDING" and not booking.get("provider_id") \
+                and booking.get("payment_mode") == "PAY_NOW":
+            # "Pay now" bookings are held back from workers until this moment.
+            # mark_paid above only succeeds once, so verify + webhook dispatch once.
+            from bookings.bookings_service import BookingsService
+            try:
+                BookingsService().dispatch(connection, booking)
+            except Exception as e:
+                print(f"[Payment] Dispatch after payment failed (non-fatal): {e}")
         self.credit_provider_for_booking(connection, booking_id)
         provider_user = self._provider_user_id(connection, booking)
         self._push(connection, [booking["customer_id"]], "Payment Confirmed",
@@ -264,13 +240,69 @@ class PaymentService:
 
     # ── worker earnings ──────────────────────────────────────────────────────
 
+    def settle_completed_booking(self, connection, booking_id):
+        """Every completion path (both sides done, admin force-complete) ends here.
+        Online-paid → the worker's share goes to their wallet. Unpaid → the worker
+        took cash, so the platform fee becomes dues on their wallet (Rapido-style).
+        Late-cancel fees this booking carried go to the workers they belong to."""
+        for row in self.booking_modal.collect_cancel_fees(connection, booking_id):
+            if row.get("provider_id"):
+                self.credit_cancel_fee(connection, row["provider_id"], row["booking_id"],
+                                       int(row["cancellation_fee"] or 0))
+        booking = self.booking_modal.read_one(connection, booking_id)
+        if booking.get("payment_status") in ("PAID", "PARTIALLY_REFUNDED"):
+            self.credit_provider_for_booking(connection, booking_id)
+        else:
+            self.charge_cash_fee(connection, booking)
+
+    def charge_cash_fee(self, connection, booking) -> int:
+        """Cash job done: the worker holds all the money, so they owe the platform
+        fee (plus any earlier cancellation fee the bill carried for another worker)."""
+        booking_id = booking["booking_id"]
+        total = int(booking.get("total_amount") or 0)
+        if (booking.get("status") != "COMPLETED" or not booking.get("provider_id") or total <= 0
+                or booking.get("payment_status") in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED")
+                or self.modal.has_entry(connection, booking_id, "CASH_FEE")):
+            return 0
+        dues = int(booking.get("dues_collected") or 0)
+        fee = (int(booking.get("platform_fee") or 0) or platform_fee_for(total - dues)) + dues
+        if fee <= 0:
+            return 0
+        provider_id = booking["provider_id"]
+        self.modal.add_earning(connection, provider_id, booking_id, fee, "CASH_FEE")
+        self.provider_modal.update_wallet(connection, provider_id, fee, "debit")
+        prov = self.provider_modal.find_by_id(connection, provider_id)
+        from payments.money_rules import CASH_DUES_LIMIT
+        if prov and int(prov.get("wallet_balance") or 0) <= -CASH_DUES_LIMIT:
+            self._push(connection, [prov["user_id"]], "Clear your dues to get new jobs",
+                       f"You owe ₹{-int(prov['wallet_balance']) // 100} in fees from cash jobs. "
+                       "Pay it from Earnings to start getting jobs again.",
+                       {"type": "dues_limit"})
+        return fee
+
+    def credit_cancel_fee(self, connection, provider_id, booking_id, amount) -> int:
+        """The customer cancelled late: the cancellation fee is the worker's."""
+        if amount <= 0 or self.modal.has_entry(connection, booking_id, "CANCEL_FEE"):
+            return 0
+        self.modal.add_earning(connection, provider_id, booking_id, amount, "CANCEL_FEE")
+        self.provider_modal.update_wallet(connection, provider_id, amount)
+        return amount
+
     def credit_provider_for_booking(self, connection, booking_id) -> int:
         """Credit the worker's share once the job is COMPLETED and paid online —
         whichever happens last calls this. Returns the amount credited (0 = not yet / already)."""
         if not self.booking_modal.claim_earning_credit(connection, booking_id):
             return 0
         booking = self.booking_modal.read_one(connection, booking_id)
-        total = int(booking.get("total_amount") or 0)
+        if (self.modal.has_entry(connection, booking_id, "CASH_FEE")
+                and not self.modal.has_entry(connection, booking_id, "CASH_FEE_REVERSAL")):
+            # Settled as cash at completion, then the online payment landed after all:
+            # the worker never held the cash, so give the cash fee back.
+            cash_fee = int(self.modal.earnings_total(connection, booking_id, "CASH_FEE"))
+            self.modal.add_earning(connection, booking["provider_id"], booking_id, cash_fee, "CASH_FEE_REVERSAL")
+            self.provider_modal.update_wallet(connection, booking["provider_id"], cash_fee)
+        # Earlier cancellation fees in the total belong to another worker.
+        total = int(booking.get("total_amount") or 0) - int(booking.get("dues_collected") or 0)
         fee = int(booking.get("platform_fee") or 0) or platform_fee_for(total)
         payment = self.modal.find_payment(connection, payment_id=booking.get("payment_id"))
         refunded = int((payment or {}).get("refund_amount") or 0)
@@ -347,16 +379,23 @@ class PaymentService:
                                                   fresh["payment_id"], fresh["status"])
         return fresh
 
-    def refund_booking_on_cancel(self, connection, booking):
-        """Called by every cancel path. Never raises — a failed refund is flagged."""
+    def refund_booking_on_cancel(self, connection, booking, keep: int = 0) -> int:
+        """Called by every cancel path. Never raises — a failed refund is flagged.
+        `keep` (paise) is held back from the refund — a late-cancel fee. Returns
+        how much was kept."""
+        kept = 0
         if booking.get("payment_id") and booking.get("payment_status") in ("PAID", "PARTIALLY_REFUNDED"):
             payment = self.modal.find_payment(connection, payment_id=booking["payment_id"])
             if payment and payment.get("razorpay_payment_id"):
+                refundable = int(payment["amount"]) - int(payment.get("refund_amount") or 0)
+                kept = max(0, min(int(keep or 0), refundable))
                 try:
-                    self.refund(connection, payment, None, "Booking cancelled", raise_on_error=False)
+                    if refundable - kept > 0:
+                        self.refund(connection, payment, refundable - kept, "Booking cancelled", raise_on_error=False)
                 except ValueError as e:
                     print(f"[Cancel] Refund skipped for {booking['booking_id']}: {e}")
         self.reverse_provider_earning(connection, booking)
+        return kept
 
     def request_refund(self, obj, connection):
         """Admin/support: POST /payments/refund {booking_id | payment_id, amount?(paise), reason?}."""
@@ -426,6 +465,53 @@ class PaymentService:
             return "success", {"ignored": "refund already handled"}
 
         return "success", {"ignored": kind}
+
+    # ── worker dues (fees on cash jobs) ──────────────────────────────────────
+
+    def dues_order(self, obj, connection):
+        """POST /providers/me/dues/order — a Razorpay order for everything the worker owes.
+        The app then calls POST /providers/me/dues/verify (same body as /payments/verify)."""
+        user_id = obj.pop("_user_id")
+        role = obj.pop("_role", None)
+        if role != "PROVIDER":
+            raise PermissionError("Provider role required")
+        provider = self.provider_modal.find_by_user_id(connection, user_id)
+        if not provider:
+            raise ValueError("Provider profile not found")
+        owed = max(0, -int(provider.get("wallet_balance") or 0))
+        if owed <= 0:
+            raise ValueError("You don't owe anything")
+        payment = self.modal.find_open_order(connection, user_id, owed, purpose="WORKER_DUES")
+        if not payment:
+            rz_order = _get_razorpay_client().order.create({
+                "amount": owed,
+                "currency": CURRENCY,
+                "receipt": f"dues-{provider['provider_id']}"[:40],
+                "notes": {"purpose": "WORKER_DUES", "provider_id": provider["provider_id"]},
+            })
+            payment = self.modal.create_payment(connection, {
+                "purpose": "WORKER_DUES",
+                "customer_id": user_id,
+                "razorpay_order_id": rz_order["id"],
+                "amount": owed,
+                "currency": CURRENCY,
+                "status": "PENDING",
+            })
+        return "success", {
+            "razorpay_order_id": payment["razorpay_order_id"],
+            "amount": owed,
+            "currency": CURRENCY,
+            "payment_id": payment["payment_id"],
+        }
+
+    def dues_verify(self, obj, connection):
+        """POST /providers/me/dues/verify — the checkout success callback for dues."""
+        if obj.get("_role") != "PROVIDER":
+            raise PermissionError("Provider role required")
+        payment = self.modal.find_payment(connection, razorpay_order_id=obj.get("razorpay_order_id"))
+        if not payment or payment.get("purpose") != "WORKER_DUES":
+            raise ValueError("Payment record not found")
+        return self.verify_payment(obj, connection)
 
     # ── payouts / admin list ─────────────────────────────────────────────────
 

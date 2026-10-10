@@ -96,9 +96,6 @@ In Lambda: `env_loader.load_secrets()` fetches JSON from AWS Secrets Manager (`S
 Uses Expo Push API (`https://exp.host/--/api/v2/push/send`). Tokens must start with `ExponentPushToken[`. Push is always non-fatal (wrapped in try/except). Also writes to `in_app_notifications` table (even for users with no push token). WebSocket pushes go through `utilities/ws_push.py`, which deletes stale connections on `GoneException`.
 
 ### Payment flow
-<<<<<<< HEAD
-Razorpay: `POST /bookings` (stays PENDING, hidden from workers) → `POST /payments/create-order` → client completes payment → `POST /payments/verify` (HMAC signature check, idempotent) → `BookingsService.dispatch` pushes "New Job" to nearby workers. Workers can list/view/claim a PENDING booking only when it is `PAID` or `total_amount = 0` (`is_dispatchable`; ₹0 bookings dispatch at creation). Unpaid bookings are cancelled after `UNPAID_BOOKING_TTL_MIN` (default 15) by `bookings/unpaid_expiry.py` (run from `location_trigger`); a verify arriving after that refunds. Provider earnings (`total - PLATFORM_FEE_PCT %`, default 10%) are credited once when the job reaches COMPLETED (`_credit_earning`), not at payment time.
-=======
 All money is integer **paise** (₹499 = `49900`) in the DB and API; the apps convert at the boundary. Coins are a count (1 coin = ₹1 = 100 paise, `booking_pricing.COIN_VALUE_PAISE`).
 
 Razorpay (`payments/payment_service.py`, `migrations/005_payment_hardening.sql`):
@@ -108,8 +105,16 @@ Razorpay (`payments/payment_service.py`, `migrations/005_payment_hardening.sql`)
 - Worker earnings: `total_amount − platform_fee` (`PLATFORM_FEE_PCT`, default 10, stored on the booking at creation) is credited **once, when the booking is COMPLETED and paid online** (`credit_provider_for_booking`, guarded by `bookings.earning_credited_at`) — from completion, admin force-complete, or a payment that arrives after completion. Cash jobs credit nothing.
 - Every cancel path (`_do_cancel`, incl. admin) refunds the online payment and claws back any credited earning as a `DEDUCTION` row. `POST /payments/refund {payment_id|booking_id, amount?}` (admin/support) refunds partially or fully; a Razorpay failure flags the payment `REFUND_FAILED`.
 - Payment statuses: `PENDING | PAID | FAILED | PARTIALLY_REFUNDED | REFUNDED | REFUND_FAILED`.
+- **When to pay** (`bookings.payment_mode`, `migrations/006_payment_mode.sql`), chosen by the customer in `POST /bookings`:
+  `PAY_AFTER` (default) — dispatched to workers at creation; paid by cash to the worker or online before completion.
+  `PAY_NOW` — online at booking; hidden from workers (`is_dispatchable`, `get_available_for_provider`, `claim_booking`) until `confirm_payment` marks it PAID and calls `BookingsService.dispatch`. Unpaid PAY_NOW bookings are cancelled after `UNPAID_BOOKING_TTL_MIN` (15) by `bookings/unpaid_expiry.py` (run from `location_trigger`). ₹0 bookings are always PAY_AFTER.
 - `RAZORPAY_KEY_ID/SECRET` missing → payments fail closed (`PaymentsNotConfigured`), never accept unsigned data.
->>>>>>> f42a2ddc30334fb4703d1d583b930d0dacc4a83d
+
+### Worker money (Rapido-style, `payments/money_rules.py`, `migrations/007_worker_money.sql`)
+Every completion path calls `PaymentService.settle_completed_booking`: online-paid → `credit_provider_for_booking`; unpaid (cash) → `charge_cash_fee` debits `platform_fee + dues_collected` from the worker wallet as a `CASH_FEE` row (wallet may go negative; reversed by `CASH_FEE_REVERSAL` if an online payment lands later).
+- **Dues limit**: wallet ≤ −`CASH_DUES_LIMIT` (₹500) → no jobs (`is_blocked_for_dues`: feed empty, accept refused, excluded from `get_available_for_service`). Worker pays via `POST /providers/me/dues/order` → checkout → `POST /providers/me/dues/verify` (payment purpose `WORKER_DUES`, `DUES_PAID` row). `GET /providers/me/earnings` stats: `dues`, `jobs_blocked`, `next_payout_date`.
+- **Late-cancel fee**: customer cancels an ACCEPTED booking more than `CANCEL_GRACE_MIN` (5) after `accepted_at` → `CANCEL_FEE` (₹50); admin cancels are free. Paid online → refund minus the fee, worker credited now (`CANCEL_FEE` row). Unpaid → `cancel_fee_status=DUE`; the customer's next booking adds it (`price_booking.previous_dues`, stored as `dues_collected`, status `COLLECTING`), released back to DUE if that booking is cancelled, and paid to the original worker when it completes. Preview: `cancel_fee_if_cancelled` / `cancel_free_until` on customer `GET /bookings/{id}`; `GET /bookings/dues`.
+- **Scheduled payouts**: `finance/auto_payouts.run_payout_batch` (from `location_trigger`) on `PAYOUT_DAYS` (MON,THU, IST, from 10:00) queues an APPROVED payout for each worker with ≥ `PAYOUT_MIN` (₹200) available and bank details; admin transfers and marks PROCESSED (`PATCH /finance/payouts/bulk {payout_ids, status}`).
 
 ### Booking pricing
 All amounts are computed server-side in `bookings/booking_pricing.py` from `services.base_price` / `sub_services.price`; client `sub_total`/`discount`/`total_amount` are ignored. Coupon, subscription quota and coins are applied (and reserved atomically) inside booking creation.

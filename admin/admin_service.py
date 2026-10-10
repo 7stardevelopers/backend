@@ -61,7 +61,7 @@ class AdminService:
         self.modal.update_booking(connection, booking_id, fields)
         if fields.get("status") == "COMPLETED":
             from payments.payment_service import PaymentService
-            PaymentService().credit_provider_for_booking(connection, booking_id)
+            PaymentService().settle_completed_booking(connection, booking_id)
         return "success", {"message": "Booking updated"}
 
     def list_users(self, obj, connection):

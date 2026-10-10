@@ -32,12 +32,19 @@ class FinanceMaster:
             "total_transactions": int(total_txn or 0),
         }
 
-    def list_payout_queue(self, conn, status="PENDING", page=1) -> list:
-        sel = self.payout.select().where(self.payout.c.status == status).order_by(
-            self.payout.c.created_at.desc()
-        ).limit(20).offset((page-1)*20)
-        rows = conn.execute(sel).fetchall()
-        return [dict(r._mapping) for r in rows]
+    def list_payout_queue(self, conn, status="PENDING", page=1, per_page=50) -> list:
+        """Payouts with the worker's name/phone so admin can match the bank transfer."""
+        rows = conn.execute(text("""
+            SELECT pr.*, u.name AS provider_name, u.phone AS provider_phone,
+                   p.bank_account_name AS bank_account_name
+            FROM payout_requests pr
+            JOIN providers p ON p.provider_id = pr.provider_id
+            LEFT JOIN users u ON u.user_id = p.user_id
+            WHERE pr.status = :status
+            ORDER BY pr.created_at DESC
+            LIMIT :lim OFFSET :off
+        """), {"status": status, "lim": per_page, "off": (page - 1) * per_page}).mappings().fetchall()
+        return [dict(r) for r in rows]
 
     def get_payout(self, conn, payout_id: str):
         row = conn.execute(self.payout.select().where(self.payout.c.payout_id == payout_id)).fetchone()
