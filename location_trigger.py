@@ -15,28 +15,6 @@ load_secrets()
 
 
 def handler(event, context):
-<<<<<<< HEAD
-    try:
-        with get_connection() as conn:
-            _process_upcoming_bookings(conn)
-        with get_connection() as conn:
-            from bookings.live_tracking import nudge_stale_trackers
-            nudge_stale_trackers(conn)
-        with get_connection() as conn:
-            from bookings.completion_reminders import remind_unconfirmed
-            remind_unconfirmed(conn)
-        with get_connection() as conn:
-            from bookings.unpaid_expiry import expire_unpaid
-            expire_unpaid(conn)
-        with get_connection() as conn:
-            from finance.auto_payouts import run_payout_batch
-            run_payout_batch(conn)
-        return {"statusCode": 200, "body": "OK"}
-    except Exception as e:
-        print(f"[LocationTrigger] Error: {e}")
-        traceback.print_exc()
-        return {"statusCode": 500, "body": str(e)}
-=======
     # Each step in its own transaction and try: one failing must not stop the
     # others (e.g. unpaid-booking expiry releasing coupons/coins/quota).
     failed = []
@@ -45,6 +23,7 @@ def handler(event, context):
         ("stale_trackers", lambda conn: __import__("bookings.live_tracking", fromlist=["x"]).nudge_stale_trackers(conn)),
         ("completion_reminders", lambda conn: __import__("bookings.completion_reminders", fromlist=["x"]).remind_unconfirmed(conn)),
         ("unpaid_expiry", lambda conn: __import__("bookings.unpaid_expiry", fromlist=["x"]).expire_unpaid(conn)),
+        ("payout_batch", lambda conn: __import__("finance.auto_payouts", fromlist=["x"]).run_payout_batch(conn)),
     ):
         try:
             with get_connection() as conn:
@@ -56,7 +35,6 @@ def handler(event, context):
     if failed:
         return {"statusCode": 500, "body": f"Failed: {', '.join(failed)}"}
     return {"statusCode": 200, "body": "OK"}
->>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
 
 
 def _process_upcoming_bookings(conn):

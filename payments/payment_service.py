@@ -228,24 +228,16 @@ class PaymentService:
             return "duplicate_refunded"
 
         booking = self.booking_modal.read_one(connection, booking_id)
-<<<<<<< HEAD
         if booking["status"] == "PENDING" and not booking.get("provider_id") \
                 and booking.get("payment_mode") == "PAY_NOW":
             # "Pay now" bookings are held back from workers until this moment.
             # mark_paid above only succeeds once, so verify + webhook dispatch once.
-=======
-        if booking["status"] == "PENDING" and not booking.get("provider_id"):
-            # Pay-first: only now does the job reach workers (list + "New Job" push).
->>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
             from bookings.bookings_service import BookingsService
             try:
                 BookingsService().dispatch(connection, booking)
             except Exception as e:
                 print(f"[Payment] Dispatch after payment failed (non-fatal): {e}")
-<<<<<<< HEAD
-=======
             booking = self.booking_modal.read_one(connection, booking_id)  # may be assigned now
->>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
         self.credit_provider_for_booking(connection, booking_id)
         provider_user = self._provider_user_id(connection, booking)
         self._push(connection, [booking["customer_id"]], "Payment Confirmed",
@@ -268,27 +260,40 @@ class PaymentService:
                 self.credit_cancel_fee(connection, row["provider_id"], row["booking_id"],
                                        int(row["cancellation_fee"] or 0))
         booking = self.booking_modal.read_one(connection, booking_id)
-        if booking.get("payment_status") in ("PAID", "PARTIALLY_REFUNDED"):
+        if (booking.get("payment_status") in ("PAID", "PARTIALLY_REFUNDED")
+                or int(booking.get("total_amount") or 0) <= 0):
+            # Paid online, or nothing to pay (fully covered): credit the worker's share.
             self.credit_provider_for_booking(connection, booking_id)
         else:
             self.charge_cash_fee(connection, booking)
 
     def charge_cash_fee(self, connection, booking) -> int:
-        """Cash job done: the worker holds all the money, so they owe the platform
-        fee (plus any earlier cancellation fee the bill carried for another worker)."""
+        """Cash job done: the worker holds everything the customer paid. Their share
+        is the full job price minus the platform fee (promos are platform-funded),
+        and any earlier cancellation fee in the bill belongs to another worker. So:
+          wallet change = (sub_total − platform_fee) − cash collected
+        Negative → CASH_FEE (dues). Positive (a big coupon/coins discount) → PROMO_CREDIT.
+        Returns the signed wallet change."""
         booking_id = booking["booking_id"]
         total = int(booking.get("total_amount") or 0)
         if (booking.get("status") != "COMPLETED" or not booking.get("provider_id") or total <= 0
                 or booking.get("payment_status") in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED")
-                or self.modal.has_entry(connection, booking_id, "CASH_FEE")):
+                or self.modal.has_entry(connection, booking_id, "CASH_FEE")
+                or self.modal.has_entry(connection, booking_id, "PROMO_CREDIT")):
             return 0
         dues = int(booking.get("dues_collected") or 0)
-        fee = (int(booking.get("platform_fee") or 0) or platform_fee_for(total - dues)) + dues
-        if fee <= 0:
-            return 0
+        base = int(booking.get("sub_total") or 0) or (total - dues)
+        fee = int(booking.get("platform_fee") or 0) or platform_fee_for(base)
+        change = (base - fee) - total
         provider_id = booking["provider_id"]
-        self.modal.add_earning(connection, provider_id, booking_id, fee, "CASH_FEE")
-        self.provider_modal.update_wallet(connection, provider_id, fee, "debit")
+        if change > 0:
+            self.modal.add_earning(connection, provider_id, booking_id, change, "PROMO_CREDIT")
+            self.provider_modal.update_wallet(connection, provider_id, change)
+            return change
+        if change == 0:
+            return 0
+        self.modal.add_earning(connection, provider_id, booking_id, -change, "CASH_FEE")
+        self.provider_modal.update_wallet(connection, provider_id, -change, "debit")
         prov = self.provider_modal.find_by_id(connection, provider_id)
         from payments.money_rules import CASH_DUES_LIMIT
         if prov and int(prov.get("wallet_balance") or 0) <= -CASH_DUES_LIMIT:
@@ -296,7 +301,21 @@ class PaymentService:
                        f"You owe ₹{-int(prov['wallet_balance']) // 100} in fees from cash jobs. "
                        "Pay it from Earnings to start getting jobs again.",
                        {"type": "dues_limit"})
-        return fee
+        return change
+
+    def _reverse_cash_settlement(self, connection, booking):
+        """Undo charge_cash_fee (the job turned out to be paid online after all)."""
+        booking_id, provider_id = booking["booking_id"], booking["provider_id"]
+        owed = (self.modal.earnings_total(connection, booking_id, "CASH_FEE")
+                - self.modal.earnings_total(connection, booking_id, "CASH_FEE_REVERSAL"))
+        if owed > 0:
+            self.modal.add_earning(connection, provider_id, booking_id, owed, "CASH_FEE_REVERSAL")
+            self.provider_modal.update_wallet(connection, provider_id, owed)
+        promo = (self.modal.earnings_total(connection, booking_id, "PROMO_CREDIT")
+                 - self.modal.earnings_total(connection, booking_id, "PROMO_REVERSAL"))
+        if promo > 0:
+            self.modal.add_earning(connection, provider_id, booking_id, promo, "PROMO_REVERSAL")
+            self.provider_modal.update_wallet(connection, provider_id, promo, "debit")
 
     def credit_cancel_fee(self, connection, provider_id, booking_id, amount) -> int:
         """The customer cancelled late: the cancellation fee is the worker's."""
@@ -312,23 +331,17 @@ class PaymentService:
         if not self.booking_modal.claim_earning_credit(connection, booking_id):
             return 0
         booking = self.booking_modal.read_one(connection, booking_id)
-<<<<<<< HEAD
         if (self.modal.has_entry(connection, booking_id, "CASH_FEE")
-                and not self.modal.has_entry(connection, booking_id, "CASH_FEE_REVERSAL")):
+                or self.modal.has_entry(connection, booking_id, "PROMO_CREDIT")):
             # Settled as cash at completion, then the online payment landed after all:
-            # the worker never held the cash, so give the cash fee back.
-            cash_fee = int(self.modal.earnings_total(connection, booking_id, "CASH_FEE"))
-            self.modal.add_earning(connection, booking["provider_id"], booking_id, cash_fee, "CASH_FEE_REVERSAL")
-            self.provider_modal.update_wallet(connection, booking["provider_id"], cash_fee)
-        # Earlier cancellation fees in the total belong to another worker.
-        total = int(booking.get("total_amount") or 0) - int(booking.get("dues_collected") or 0)
-        fee = int(booking.get("platform_fee") or 0) or platform_fee_for(total)
-=======
+            # the worker never held the cash, so undo that settlement first.
+            self._reverse_cash_settlement(connection, booking)
         # Coupons, coins and plan discounts are funded by the platform: the worker's
         # share is on the full job price (sub_total), not on what the customer paid.
-        base = int(booking.get("sub_total") or 0) or int(booking.get("total_amount") or 0)
+        # Earlier cancellation fees in the total belong to another worker.
+        base = int(booking.get("sub_total") or 0) or (
+            int(booking.get("total_amount") or 0) - int(booking.get("dues_collected") or 0))
         fee = int(booking.get("platform_fee") or 0) or platform_fee_for(base)
->>>>>>> 2a6b265c84b73de9464fb5049c7afe06d757e943
         payment = self.modal.find_payment(connection, payment_id=booking.get("payment_id"))
         refunded = int((payment or {}).get("refund_amount") or 0)
         if refunded and base:

@@ -33,7 +33,8 @@ def expire_unpaid(conn):
     for r in rows:
         try:
             booking = svc.modal.read_one(conn, r.booking_id)
-            if booking.get("payment_status") == "PAID" or booking["status"] != "PENDING"                     or booking.get("payment_mode") != "PAY_NOW":
+            if (booking.get("payment_status") == "PAID" or booking["status"] != "PENDING"
+                    or booking.get("payment_mode") != "PAY_NOW"):
                 continue  # paid / claimed since the SELECT
             # only_unpaid: a payment confirmed after our read wins (no cancel, no refund)
             svc._do_cancel(conn, booking, only_unpaid=True)

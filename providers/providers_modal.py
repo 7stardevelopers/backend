@@ -185,9 +185,10 @@ class ProvidersMaster:
 
         stats = dict(conn.execute(text("""
             SELECT
-              COALESCE(SUM(CASE WHEN type IN ('BOOKING', 'CANCEL_FEE', 'CASH_FEE_REVERSAL')
+              COALESCE(SUM(CASE WHEN type IN ('BOOKING', 'CANCEL_FEE', 'CASH_FEE_REVERSAL', 'PROMO_CREDIT')
                                 THEN amount ELSE 0 END), 0) AS total_earned,
-              COALESCE(SUM(CASE WHEN type IN ('DEDUCTION', 'CASH_FEE') THEN amount ELSE 0 END), 0) AS total_deducted,
+              COALESCE(SUM(CASE WHEN type IN ('DEDUCTION', 'CASH_FEE', 'PROMO_REVERSAL')
+                                THEN amount ELSE 0 END), 0) AS total_deducted,
               COUNT(*) AS total_entries
             FROM provider_earnings
             WHERE provider_id = :pid

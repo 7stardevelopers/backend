@@ -43,6 +43,12 @@ class CashFeeTests(WorkerMoneyBase):
         self.finish()  # second completion signal must not charge again
         self.assertEqual(self.wallet(), -4990)
 
+    def test_cash_job_with_big_discount_credits_worker(self):
+        # ₹600 job, ₹101 coupon → customer pays ₹499 cash; worker's share is ₹600 − ₹60.
+        self.set(sub_total=60000, platform_fee=6000)
+        self.finish()
+        self.assertEqual(self.wallet(), (60000 - 6000) - 49900)
+
     def test_online_job_credits_share_not_fee(self):
         self.verify(self.order())
         self.finish()
