@@ -205,3 +205,11 @@ class JobPushTextTests(unittest.TestCase):
         from bookings.bookings_service import _job_push_body
         body = _job_push_body({"service_snapshot": '{"name": "AC Repair"}', "scheduled_at": None})
         self.assertEqual(body, "AC Repair • As soon as possible. Tap to view and accept.")
+
+
+class NotificationListTests(unittest.TestCase):
+    def test_created_at_is_utc_with_z_and_data_is_object(self):
+        from notifications.notifications_service import _present_notification
+        n = _present_notification({"created_at": datetime(2026, 10, 11, 6, 0, 5), "data": '{"booking_id": "b1"}'})
+        self.assertEqual(n["created_at"], "2026-10-11T06:00:05.000Z")
+        self.assertEqual(n["data"], {"booking_id": "b1"})

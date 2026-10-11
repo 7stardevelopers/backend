@@ -1,3 +1,4 @@
+import json
 import os
 import requests
 
@@ -42,7 +43,7 @@ class NotificationsService:
                 t.c.created_at.desc()
             ).limit(30).offset((page-1)*30)
             rows = connection.execute(sel).fetchall()
-            return "success", [dict(r._mapping) for r in rows]
+            return "success", [_present_notification(dict(r._mapping)) for r in rows]
         except Exception as e:
             return "success", []
 
@@ -119,3 +120,17 @@ class NotificationsService:
                 )
             except Exception as e:
                 print(f"[Notify] Batch send failed (non-fatal): {e}")
+
+
+def _present_notification(n: dict) -> dict:
+    """created_at as ISO UTC with 'Z' (naive values read as local time on phones,
+    5h30 off in India) and data as an object so the apps can route a tap."""
+    from utilities.time_format import to_iso_utc
+    n["created_at"] = to_iso_utc(n.get("created_at"))
+    data = n.get("data")
+    if isinstance(data, str):
+        try:
+            n["data"] = json.loads(data)
+        except ValueError:
+            n["data"] = {}
+    return n
