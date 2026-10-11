@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timedelta
 
 from tests.helpers import make_db, insert
+from utilities.db_connection import get_table
 
 from bookings.booking_pricing import (
     price_booking, apply_booking_side_effects, calculate_coupon_discount, release_booking_side_effects,
@@ -141,3 +142,66 @@ class BookingStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BookingAddressPinTests(unittest.TestCase):
+    """Bookings must carry coordinates so workers can navigate and be matched."""
+
+    def setUp(self):
+        self.conn = make_db()
+        insert(self.conn, "user_addresses", address_id="a1", user_id="c1", full_address="12 MG Road, Vizag",
+               lat=17.72, lng=83.31, is_deleted=False)
+        insert(self.conn, "user_addresses", address_id="a2", user_id="c1", full_address="No pin street",
+               is_deleted=False)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_snapshot_coords_kept(self):
+        from bookings.bookings_service import _pinned_snapshot
+        snap = _pinned_snapshot(self.conn, "c1", "a1", {"full_address": "x", "lat": 1.5, "lng": 2.5})
+        self.assertEqual((snap["lat"], snap["lng"]), (1.5, 2.5))
+
+    def test_null_snapshot_coords_filled_from_saved_address(self):
+        from bookings.bookings_service import _pinned_snapshot
+        snap = _pinned_snapshot(self.conn, "c1", "a1", {"full_address": "12 MG Road", "lat": None, "lng": None})
+        self.assertEqual((snap["lat"], snap["lng"]), (17.72, 83.31))
+
+    def test_other_users_address_not_used(self):
+        from bookings.bookings_service import _pinned_snapshot
+        snap = _pinned_snapshot(self.conn, "intruder", "a1", {"full_address": "x", "lat": None})
+        self.assertNotIn("lat", snap)
+
+    def test_unpinnable_address_drops_null_keys(self):
+        from unittest.mock import patch
+        from bookings.bookings_service import _pinned_snapshot
+        with patch("places.places_service.geocode_address", return_value=None):
+            snap = _pinned_snapshot(self.conn, "c1", "a2", {"full_address": "No pin street", "lat": None, "lng": None})
+        self.assertEqual(snap, {"full_address": "No pin street"})
+
+    def test_geocoded_pin_saved_on_address(self):
+        from unittest.mock import patch
+        from bookings.bookings_service import _pinned_snapshot
+        with patch("places.places_service.geocode_address", return_value=(17.7, 83.3)):
+            snap = _pinned_snapshot(self.conn, "c1", "a2", {"full_address": "No pin street"})
+        self.assertEqual((snap["lat"], snap["lng"]), (17.7, 83.3))
+        row = self.conn.execute(get_table("user_addresses").select()
+                                .where(get_table("user_addresses").c.address_id == "a2")).fetchone()
+        self.assertEqual((row.lat, row.lng), (17.7, 83.3))
+
+
+class JobPushTextTests(unittest.TestCase):
+    def test_when_label_in_ist(self):
+        from datetime import timezone
+        from bookings.bookings_service import _job_when
+        now = datetime(2026, 10, 11, 6, 0, tzinfo=timezone.utc)  # 11:30 IST
+        self.assertEqual(_job_when("2026-10-11T11:00:00Z", now), "Today, 4:30 PM")
+        self.assertEqual(_job_when(datetime(2026, 10, 12, 3, 30), now), "Tomorrow, 9:00 AM")
+        self.assertEqual(_job_when("2026-10-18T05:30:00Z", now), "Sun 18 Oct, 11:00 AM")
+        self.assertEqual(_job_when(None, now), "As soon as possible")
+        self.assertEqual(_job_when("garbage", now), "As soon as possible")
+
+    def test_push_body_names_service_and_time(self):
+        from bookings.bookings_service import _job_push_body
+        body = _job_push_body({"service_snapshot": '{"name": "AC Repair"}', "scheduled_at": None})
+        self.assertEqual(body, "AC Repair • As soon as possible. Tap to view and accept.")

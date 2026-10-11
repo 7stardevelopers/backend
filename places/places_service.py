@@ -91,3 +91,26 @@ class PlacesService:
         results = data.get("results", [])
         address = results[0].get("formatted_address", "Selected Location") if results else "Selected Location"
         return "success", {"address": address, "lat": float(lat), "lng": float(lng)}
+
+
+def geocode_address(address):
+    """(lat, lng) for an address typed without a map pin, or None. Never raises —
+    a booking or address save must not fail because geocoding is unavailable."""
+    address = (address or "").strip()
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "")
+    if len(address) < 5 or not api_key:
+        return None
+    try:
+        resp = http.get(
+            f"{GEOCODE_BASE}/json",
+            params={"address": address, "key": api_key, "region": "in", "components": "country:IN"},
+            timeout=4,
+        )
+        results = resp.json().get("results") or []
+        loc = results[0].get("geometry", {}).get("location", {}) if results else {}
+        if loc.get("lat") is None or loc.get("lng") is None:
+            return None
+        return float(loc["lat"]), float(loc["lng"])
+    except Exception as e:
+        print(f"[Geocode] failed (non-fatal): {e}")
+        return None

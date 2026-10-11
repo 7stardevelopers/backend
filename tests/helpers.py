@@ -108,6 +108,10 @@ CREATE TABLE identity_reports (
     ticket_id TEXT, customer_note TEXT, status TEXT DEFAULT 'OPEN', admin_note TEXT,
     resolved_by TEXT, resolved_at TIMESTAMP, created_at TIMESTAMP
 );
+CREATE TABLE user_addresses (
+    address_id TEXT PRIMARY KEY, user_id TEXT, label TEXT, full_address TEXT, lat REAL, lng REAL,
+    pincode TEXT, city TEXT, is_default BOOLEAN DEFAULT 0, is_deleted BOOLEAN DEFAULT 0, created_at TIMESTAMP
+);
 CREATE TABLE ticket_messages (
     message_id TEXT PRIMARY KEY, ticket_id TEXT, sender_id TEXT, content TEXT,
     is_internal BOOLEAN DEFAULT 0, created_at TIMESTAMP

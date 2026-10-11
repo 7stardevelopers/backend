@@ -83,12 +83,14 @@ class BookingsService:
             items=validated.items, coupon_id=validated.coupon_id, coins_used=validated.coins_used,
         )
 
+        address_snapshot = _pinned_snapshot(connection, user_id, validated.address_id, validated.address_snapshot)
+
         booking_data = {
             "customer_id": user_id,
             "service_id": validated.service_id,
             "scheduled_at": validated.scheduled_at,
             "address_id": validated.address_id,
-            "address_snapshot": validated.address_snapshot,
+            "address_snapshot": address_snapshot,
             "service_snapshot": validated.service_snapshot,
             "sub_total": pricing["sub_total"],
             "discount": pricing["discount"],
@@ -155,7 +157,7 @@ class BookingsService:
                                 connection=connection,
                                 user_ids=[prov["user_id"]],
                                 title="Repeat Customer!",
-                                body="A customer you've worked with before requested you again.",
+                                body=f"A customer you've worked with before booked you again — {_job_push_body(booking)}",
                                 data={"type": "job_available", "booking_id": booking["booking_id"]},
                             )
             except Exception as e:
@@ -186,8 +188,9 @@ class BookingsService:
                         connection=connection,
                         user_ids=nearby_user_ids,
                         title="New Job Near You",
-                        body="A new job is available in your area. Tap to view.",
-                        data={"type": "job_available", "booking_id": booking["booking_id"]},
+                        body=_job_push_body(booking),
+                        data={"type": "job_available", "booking_id": booking["booking_id"],
+                              "scheduled_at": _iso_utc(booking.get("scheduled_at"))},
                     )
             except Exception as e:
                 print(f"[Notify] nearby push failed (non-fatal): {e}")
@@ -820,6 +823,86 @@ def cancellation_fee_for(booking) -> int:
 def is_blocked_for_dues(provider) -> bool:
     """Worker owes CASH_DUES_LIMIT or more (fees on cash jobs): no new jobs until paid."""
     return int(provider.get("wallet_balance") or 0) <= -CASH_DUES_LIMIT
+
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _safe_utc(value):
+    try:
+        return _as_utc(value.replace("Z", "+00:00") if isinstance(value, str) else value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _iso_utc(value):
+    ts = _safe_utc(value)
+    return ts.isoformat().replace("+00:00", "Z") if ts else None
+
+
+def _job_when(scheduled_at, now=None) -> str:
+    """'Today, 4:30 PM' / 'Tomorrow, 9:00 AM' / 'Sat 18 Oct, 11:00 AM' in IST (workers are in India)."""
+    ts = _safe_utc(scheduled_at)
+    if ts is None:
+        return "As soon as possible"
+    local = ts.astimezone(IST)
+    today = (now or datetime.now(timezone.utc)).astimezone(IST).date()
+    clock = local.strftime("%I:%M %p").lstrip("0")
+    if local.date() == today:
+        return f"Today, {clock}"
+    if local.date() == today + timedelta(days=1):
+        return f"Tomorrow, {clock}"
+    return f"{local.strftime('%a')} {local.day} {local.strftime('%b')}, {clock}"
+
+
+def _job_push_body(booking) -> str:
+    snap = booking.get("service_snapshot") or {}
+    if isinstance(snap, str):
+        try:
+            snap = json.loads(snap)
+        except ValueError:
+            snap = {}
+    name = (snap or {}).get("name") or "New job"
+    return f"{name} • {_job_when(booking.get('scheduled_at'))}. Tap to view and accept."
+
+
+def _as_coord(value):
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f else None  # NaN
+
+
+def _pinned_snapshot(connection, user_id, address_id, snapshot):
+    """The booking's address with lat/lng filled in: from the snapshot, else the
+    saved address, else geocoded from its text. Without coordinates the worker
+    can't navigate and the job can't be matched to nearby workers."""
+    snap = dict(snapshot or {})
+    if _as_coord(snap.get("lat")) is not None and _as_coord(snap.get("lng")) is not None:
+        return snap
+    coords = None
+    addr_t = get_table("user_addresses")
+    row = None
+    if address_id:
+        row = connection.execute(
+            addr_t.select().where(addr_t.c.address_id == address_id).where(addr_t.c.user_id == user_id)
+        ).fetchone()
+    if row is not None and _as_coord(row.lat) is not None and _as_coord(row.lng) is not None:
+        coords = (_as_coord(row.lat), _as_coord(row.lng))
+    else:
+        from places.places_service import geocode_address
+        coords = geocode_address(snap.get("full_address") or (row.full_address if row is not None else None))
+        if coords and row is not None:
+            connection.execute(addr_t.update().where(addr_t.c.address_id == address_id)
+                               .values(lat=coords[0], lng=coords[1]))
+    if coords:
+        snap["lat"], snap["lng"] = coords
+    else:
+        # Drop JSON nulls so SQL sees a missing key, not the string 'null'.
+        snap.pop("lat", None)
+        snap.pop("lng", None)
+    return snap or snapshot
 
 
 def is_dispatchable(booking) -> bool:

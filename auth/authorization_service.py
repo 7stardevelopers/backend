@@ -172,7 +172,9 @@ class AuthorizationService:
         if not user_id:
             raise PermissionError("Authentication required")
         data = AddAddressSchema(**{k: v for k, v in obj.items() if not k.startswith("_")})
-        address_id = self.modal.add_address(connection, user_id, data.model_dump(exclude_none=True))
+        fields = data.model_dump(exclude_none=True)
+        _pin_address(fields)
+        address_id = self.modal.add_address(connection, user_id, fields)
         return "created", {"address_id": address_id}
 
     def update_address(self, obj, connection):
@@ -187,6 +189,8 @@ class AuthorizationService:
         fields = data.model_dump(exclude_none=True)
         if not fields:
             return "success", {"message": "Address updated"}
+        if fields.get("full_address"):
+            _pin_address(fields)
         updated = self.modal.update_address(connection, user_id, address_id, fields)
         if not updated:
             raise ValueError("Address not found")
@@ -297,3 +301,14 @@ class AuthorizationService:
 def _safe_user(user: dict) -> dict:
     excluded = {"fcm_token"}
     return {k: v for k, v in user.items() if k not in excluded}
+
+
+def _pin_address(fields: dict):
+    """Addresses picked without a map pin get one from their text, so workers can
+    navigate there and the booking can be offered to workers nearby."""
+    if fields.get("lat") is not None and fields.get("lng") is not None:
+        return
+    from places.places_service import geocode_address
+    coords = geocode_address(fields.get("full_address"))
+    if coords:
+        fields["lat"], fields["lng"] = coords
