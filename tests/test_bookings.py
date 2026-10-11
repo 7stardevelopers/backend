@@ -213,3 +213,49 @@ class NotificationListTests(unittest.TestCase):
         n = _present_notification({"created_at": datetime(2026, 10, 11, 6, 0, 5), "data": '{"booking_id": "b1"}'})
         self.assertEqual(n["created_at"], "2026-10-11T06:00:05.000Z")
         self.assertEqual(n["data"], {"booking_id": "b1"})
+
+
+class BookingPinBackfillTests(unittest.TestCase):
+    """Open bookings saved with lat: null get coordinates once they're read."""
+
+    def setUp(self):
+        self.conn = make_db()
+        insert(self.conn, "user_addresses", address_id="a1", user_id="c1", full_address="12 MG Road, Vizag",
+               lat=17.72, lng=83.31, is_deleted=False)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _booking(self, booking_id, status, snap):
+        import json
+        insert(self.conn, "bookings", booking_id=booking_id, customer_id="c1", address_id="a1",
+               status=status, address_snapshot=json.dumps(snap))
+        return BookingsMaster().read_one(self.conn, booking_id)
+
+    def test_open_booking_gets_saved_address_coords_and_keeps_them(self):
+        from bookings.bookings_service import BookingsService
+        b = self._booking("b1", "EN_ROUTE", {"full_address": "12 MG Road", "lat": None, "lng": None})
+        out = BookingsService()._ensure_pinned(self.conn, b)
+        self.assertEqual((out["address_snapshot"]["lat"], out["address_snapshot"]["lng"]), (17.72, 83.31))
+        stored = BookingsMaster().read_one(self.conn, "b1")["address_snapshot"]
+        stored = stored if isinstance(stored, dict) else __import__("json").loads(stored)
+        self.assertEqual(stored["lat"], 17.72)
+
+    def test_failed_lookup_is_remembered(self):
+        from unittest.mock import patch
+        from bookings.bookings_service import BookingsService
+        insert(self.conn, "user_addresses", address_id="a2", user_id="c1", full_address="Nowhere", is_deleted=False)
+        import json
+        insert(self.conn, "bookings", booking_id="b2", customer_id="c1", address_id="a2", status="ACCEPTED",
+               address_snapshot=json.dumps({"full_address": "Nowhere"}))
+        svc = BookingsService()
+        with patch("places.places_service.geocode_address", return_value=None) as geo:
+            svc._ensure_pinned(self.conn, BookingsMaster().read_one(self.conn, "b2"))
+            svc._ensure_pinned(self.conn, BookingsMaster().read_one(self.conn, "b2"))
+        self.assertEqual(geo.call_count, 1)
+
+    def test_finished_booking_untouched(self):
+        from bookings.bookings_service import BookingsService
+        b = self._booking("b3", "COMPLETED", {"full_address": "12 MG Road"})
+        out = BookingsService()._ensure_pinned(self.conn, b)
+        self.assertIs(out, b)

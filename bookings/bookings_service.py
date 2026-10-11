@@ -258,6 +258,7 @@ class BookingsService:
                 is_provider = True
             if not is_customer and not is_provider:
                 raise PermissionError("Access denied")
+        booking = self._ensure_pinned(connection, booking)
         booking["items"] = self.modal.get_items(connection, booking_id)
         if booking.get("provider_id"):
             try:
@@ -340,6 +341,7 @@ class BookingsService:
         if is_customer and not is_live_tracking(booking, conn=connection):
             return None
 
+        booking = self._ensure_pinned(connection, booking)
         addr = booking.get("address_snapshot") or {}
         if isinstance(addr, str):
             import json
@@ -351,6 +353,30 @@ class BookingsService:
         if not loc or loc.get("lat") is None or addr.get("lat") is None or addr.get("lng") is None:
             return None
         return booking_id, (float(loc["lat"]), float(loc["lng"])), (float(addr["lat"]), float(addr["lng"]))
+
+    def _ensure_pinned(self, connection, booking):
+        """Open bookings saved without address coordinates (before booking creation
+        filled them in) get them once and keep them, so the customer's map shows the
+        home pin + road route and the worker can navigate. A failed lookup is
+        remembered so polling screens don't geocode on every request."""
+        if booking.get("status") in ("COMPLETED", "CANCELLED", "REJECTED"):
+            return booking
+        snap = booking.get("address_snapshot") or {}
+        if isinstance(snap, str):
+            try:
+                snap = json.loads(snap)
+            except ValueError:
+                snap = {}
+        if not isinstance(snap, dict) or snap.get("pin_failed"):
+            return booking
+        if _as_coord(snap.get("lat")) is not None and _as_coord(snap.get("lng")) is not None:
+            return booking
+        pinned = _pinned_snapshot(connection, booking.get("customer_id"), booking.get("address_id"), snap) or {}
+        if _as_coord(pinned.get("lat")) is None:
+            pinned = {**pinned, "pin_failed": True}
+        self.modal.update_address_snapshot(connection, booking["booking_id"], pinned)
+        booking["address_snapshot"] = pinned
+        return booking
 
     @staticmethod
     def _redis_or_none():

@@ -214,6 +214,9 @@ class BookingsMaster:
             .values(payment_id=payment_id, payment_status=payment_status, updated_at=now_utc())
         )
 
+    def update_address_snapshot(self, conn, booking_id: str, snapshot: dict):
+        conn.execute(self.t.update().where(self.t.c.booking_id == booking_id).values(address_snapshot=snapshot))
+
     def update_proof_photos(self, conn, booking_id: str, photo_urls: list):
         conn.execute(
             self.t.update()
