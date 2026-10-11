@@ -222,15 +222,17 @@ class BookingsMaster:
         )
 
     def get_available_for_provider(self, conn, provider_id: str, lat=None, lng=None) -> list:
-        # Pull coords from snapshot first, fall back to user_addresses table
+        # Pull coords from snapshot first, fall back to user_addresses table.
+        # A JSON null unquotes to the string 'null', so NULLIF it or COALESCE
+        # never falls back (and float('null') fails below).
         rows = conn.execute(text("""
             SELECT b.*,
                    COALESCE(
-                       JSON_UNQUOTE(JSON_EXTRACT(b.address_snapshot, '$.lat')),
+                       NULLIF(JSON_UNQUOTE(JSON_EXTRACT(b.address_snapshot, '$.lat')), 'null'),
                        ua.lat
                    ) AS _lat,
                    COALESCE(
-                       JSON_UNQUOTE(JSON_EXTRACT(b.address_snapshot, '$.lng')),
+                       NULLIF(JSON_UNQUOTE(JSON_EXTRACT(b.address_snapshot, '$.lng')), 'null'),
                        ua.lng
                    ) AS _lng
             FROM bookings b
@@ -258,12 +260,13 @@ class BookingsMaster:
 
         result = []
         for b in bookings:
-            b_lat = b.pop("_lat", None)
-            b_lng = b.pop("_lng", None)
-            if b_lat is None or b_lng is None:
-                # No location data anywhere — skip, can't verify proximity
+            try:
+                b_lat = float(b.pop("_lat", None))
+                b_lng = float(b.pop("_lng", None))
+            except (TypeError, ValueError):
+                # No usable location data anywhere — skip, can't verify proximity
                 continue
-            if _haversine_km(lat, lng, float(b_lat), float(b_lng)) <= 20:
+            if _haversine_km(lat, lng, b_lat, b_lng) <= 20:
                 result.append(b)
         return result[:20]
 
