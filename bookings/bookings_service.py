@@ -20,6 +20,8 @@ from utilities.db_connection import get_table
 # only has to cover the wait at the door; tapping "Yes" again issues a fresh one.
 DOOR_OTP_TTL_SECONDS = 4 * 3600
 MAX_OTP_ATTEMPTS = 5
+# A booking address that couldn't be pinned is looked up again after this long.
+PIN_RETRY_MIN = 10
 
 # PENDING → ACCEPTED goes through accept_booking (claim) and
 # EN_ROUTE/ACCEPTED → IN_PROGRESS only through verify_door_otp, so neither the
@@ -358,7 +360,9 @@ class BookingsService:
         """Open bookings saved without address coordinates (before booking creation
         filled them in) get them once and keep them, so the customer's map shows the
         home pin + road route and the worker can navigate. A failed lookup is
-        remembered so polling screens don't geocode on every request."""
+        retried at most every PIN_RETRY_MIN, so polling screens don't geocode on
+        every request but a booking isn't left pinless for good (geocoding down
+        once, or the saved address pinned on the map later)."""
         if booking.get("status") in ("COMPLETED", "CANCELLED", "REJECTED"):
             return booking
         snap = booking.get("address_snapshot") or {}
@@ -367,13 +371,18 @@ class BookingsService:
                 snap = json.loads(snap)
             except ValueError:
                 snap = {}
-        if not isinstance(snap, dict) or snap.get("pin_failed"):
+        if not isinstance(snap, dict):
             return booking
         if _as_coord(snap.get("lat")) is not None and _as_coord(snap.get("lng")) is not None:
             return booking
-        pinned = _pinned_snapshot(connection, booking.get("customer_id"), booking.get("address_id"), snap) or {}
+        failed_at = _parse_iso(snap.get("pin_failed_at"))
+        now = datetime.now(timezone.utc)
+        if failed_at is not None and now - failed_at < timedelta(minutes=PIN_RETRY_MIN):
+            return booking
+        clean = {k: v for k, v in snap.items() if k not in ("pin_failed", "pin_failed_at")}
+        pinned = _pinned_snapshot(connection, booking.get("customer_id"), booking.get("address_id"), clean) or {}
         if _as_coord(pinned.get("lat")) is None:
-            pinned = {**pinned, "pin_failed": True}
+            pinned = {**pinned, "pin_failed_at": now.isoformat()}
         self.modal.update_address_snapshot(connection, booking["booking_id"], pinned)
         booking["address_snapshot"] = pinned
         return booking
@@ -898,6 +907,17 @@ def _as_coord(value):
     except (TypeError, ValueError):
         return None
     return f if f == f else None  # NaN
+
+
+def _parse_iso(value):
+    """Aware UTC datetime from an ISO string, or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def _pinned_snapshot(connection, user_id, address_id, snapshot):

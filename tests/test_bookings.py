@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from tests.helpers import make_db, insert
 from utilities.db_connection import get_table
@@ -253,6 +253,30 @@ class BookingPinBackfillTests(unittest.TestCase):
             svc._ensure_pinned(self.conn, BookingsMaster().read_one(self.conn, "b2"))
             svc._ensure_pinned(self.conn, BookingsMaster().read_one(self.conn, "b2"))
         self.assertEqual(geo.call_count, 1)
+
+    def _stored_snap(self, booking_id):
+        import json
+        s = BookingsMaster().read_one(self.conn, booking_id)["address_snapshot"]
+        return s if isinstance(s, dict) else json.loads(s)
+
+    def test_failed_lookup_is_retried_after_window(self):
+        from unittest.mock import patch
+        from bookings.bookings_service import BookingsService, PIN_RETRY_MIN
+        old = (datetime.now(timezone.utc) - timedelta(minutes=PIN_RETRY_MIN + 1)).isoformat()
+        b = self._booking("b4", "ACCEPTED", {"full_address": "Somewhere", "pin_failed_at": old})
+        insert(self.conn, "user_addresses", address_id="a4", user_id="c1", full_address="Somewhere", is_deleted=False)
+        with patch("places.places_service.geocode_address", return_value=(17.7, 83.3)) as geo:
+            out = BookingsService()._ensure_pinned(self.conn, {**b, "address_id": "a4"})
+        self.assertEqual(geo.call_count, 1)
+        self.assertEqual(out["address_snapshot"]["lat"], 17.7)
+        self.assertNotIn("pin_failed_at", self._stored_snap("b4"))
+
+    def test_legacy_pin_failed_flag_heals_from_saved_address(self):
+        from bookings.bookings_service import BookingsService
+        b = self._booking("b5", "EN_ROUTE", {"full_address": "12 MG Road", "pin_failed": True})
+        out = BookingsService()._ensure_pinned(self.conn, b)
+        self.assertEqual((out["address_snapshot"]["lat"], out["address_snapshot"]["lng"]), (17.72, 83.31))
+        self.assertNotIn("pin_failed", self._stored_snap("b5"))
 
     def test_finished_booking_untouched(self):
         from bookings.bookings_service import BookingsService
