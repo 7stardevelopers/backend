@@ -2,6 +2,7 @@
 PAY_NOW   — online at booking; workers see the job only once it is paid.
 PAY_AFTER — cash or online after the job; workers see the job at once."""
 import unittest
+from bookings.dispatch_rules import next_open_slot
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -71,7 +72,7 @@ class PaymentModeTests(PaymentTestBase):
              patch("bookings.bookings_service.BookingsService.dispatch", side_effect=lambda c, b: b) as dispatch:
             _, created = self.books.create({
                 "_user_id": "cust", "_role": "CUSTOMER", "service_id": "s1",
-                "scheduled_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+                "scheduled_at": next_open_slot().isoformat(),  # inside working hours
                 "payment_mode": "PAY_NOW",
             }, self.conn)
         self.assertEqual(created["payment_mode"], "PAY_AFTER")

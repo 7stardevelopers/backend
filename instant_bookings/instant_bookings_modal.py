@@ -9,11 +9,12 @@ class InstantBookingsMaster:
         return get_table("instant_bookings")
 
     def create(self, conn, booking_id: str, surge_applied: bool = False, surge_pct: int = 0) -> dict:
+        from bookings.dispatch_rules import INSTANT_ETA_MIN
         record = {
             "instant_id": new_uuid(),
             "booking_id": booking_id,
             "requested_at": now_utc(),
-            "sla_minutes": 60,
+            "sla_minutes": INSTANT_ETA_MIN,
             "surge_applied": surge_applied,
             "surge_pct": surge_pct,
             "status": "DISPATCHING",
@@ -25,6 +26,10 @@ class InstantBookingsMaster:
         sel = self.t.select().where(self.t.c.booking_id == booking_id)
         row = conn.execute(sel).fetchone()
         return dict(row._mapping) if row else None
+
+    def mark_assigned(self, conn, booking_id: str):
+        conn.execute(self.t.update().where(self.t.c.booking_id == booking_id)
+                     .values(status="ASSIGNED", provider_assigned_at=now_utc()))
 
     def update(self, conn, instant_id: str, fields: dict):
         conn.execute(self.t.update().where(self.t.c.instant_id == instant_id).values(**fields))

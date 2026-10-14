@@ -88,17 +88,24 @@ class AdminMaster:
             "pending_provider_approvals": _count("SELECT COUNT(*) FROM providers WHERE status='PENDING'"),
         }
 
-    def list_bookings_detailed(self, conn, status=None, page=1, per_page=20):
-        where  = "WHERE b.status = :status" if status else ""
-        params = {"lim": per_page, "off": (page - 1) * per_page}
+    def list_bookings_detailed(self, conn, status=None, page=1, per_page=20, booking_type=None):
+        conds, filt = [], {}
         if status:
-            params["status"] = status
+            conds.append("b.status = :status")
+            filt["status"] = status
+        if booking_type:
+            conds.append("COALESCE(b.is_instant, FALSE) = :instant")
+            filt["instant"] = booking_type == "INSTANT"
+        where  = ("WHERE " + " AND ".join(conds)) if conds else ""
+        params = {"lim": per_page, "off": (page - 1) * per_page, **filt}
         sql = f"""
             SELECT b.booking_id, b.status, b.scheduled_at, b.total_amount,
                    b.payment_status, b.created_at, b.customer_id, b.provider_id,
                    cu.name  AS customer_name, cu.phone AS customer_phone,
                    pu.name  AS provider_name, pr.user_id AS provider_user_id,
                    b.provider_done_at, b.customer_done_at, b.completion_disputed_at,
+                   b.is_instant, b.expires_at, b.dispatch_attempts, b.dispatch_radius_km,
+                   b.cancellation_reason,
                    s.name   AS service_name
             FROM bookings b
             LEFT JOIN users     cu ON b.customer_id = cu.user_id
@@ -111,7 +118,7 @@ class AdminMaster:
         """
         count_sql = f"SELECT COUNT(*) FROM bookings b {where}"
         rows  = conn.execute(text(sql), params).mappings().fetchall()
-        total = int(conn.execute(text(count_sql), {"status": status} if status else {}).scalar() or 0)
+        total = int(conn.execute(text(count_sql), filt).scalar() or 0)
         return {"items": [dict(r) for r in rows], "total": total}
 
     def list_users_detailed(self, conn, page=1, per_page=20, search=None):

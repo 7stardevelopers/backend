@@ -213,9 +213,17 @@ CREATE TABLE IF NOT EXISTS bookings (
     proof_photos        JSON,
     customer_notes      TEXT,
     cancellation_reason TEXT,
+    -- 008: instant / scheduled dispatch (bookings/dispatch.py)
+    expires_at          TIMESTAMP NULL,
+    dispatch_attempts   INT NOT NULL DEFAULT 0,
+    last_dispatched_at  TIMESTAMP NULL,
+    dispatch_radius_km  INT NULL,
+    ends_at             TIMESTAMP NULL,
     created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (booking_id),
+    INDEX idx_bookings_status_expires (status, expires_at),
+    INDEX idx_bookings_provider_status_sched (provider_id, status, scheduled_at),
     FOREIGN KEY (customer_id) REFERENCES users(user_id),
     FOREIGN KEY (provider_id) REFERENCES providers(provider_id),
     FOREIGN KEY (service_id) REFERENCES services(service_id),
@@ -265,7 +273,8 @@ CREATE TABLE IF NOT EXISTS instant_bookings (
     sla_minutes          INTEGER DEFAULT 60,
     surge_applied        BOOLEAN DEFAULT FALSE,
     surge_pct            INTEGER DEFAULT 0,
-    status               VARCHAR(20) DEFAULT 'DISPATCHING',
+    status               VARCHAR(20) DEFAULT 'DISPATCHING',  -- DISPATCHING | ASSIGNED | EXPIRED
+    expired_at           TIMESTAMP NULL,
     PRIMARY KEY (instant_id),
     FOREIGN KEY (booking_id) REFERENCES bookings(booking_id)
 );

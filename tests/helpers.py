@@ -16,11 +16,11 @@ CREATE TABLE users (
 );
 CREATE TABLE services (
     service_id TEXT PRIMARY KEY, category_id TEXT, name TEXT, base_price INTEGER,
-    is_active BOOLEAN DEFAULT 1
+    is_active BOOLEAN DEFAULT 1, instant_available BOOLEAN DEFAULT 0
 );
 CREATE TABLE sub_services (
     sub_service_id TEXT PRIMARY KEY, sub_category_id TEXT, service_id TEXT, name TEXT,
-    price INTEGER, is_active BOOLEAN DEFAULT 1
+    price INTEGER, is_active BOOLEAN DEFAULT 1, duration_minutes INTEGER
 );
 CREATE TABLE coupons (
     coupon_id TEXT PRIMARY KEY, code TEXT, title TEXT, type TEXT, value INTEGER,
@@ -82,8 +82,20 @@ CREATE TABLE bookings (
     earning_credited_at TIMESTAMP, coupon_id TEXT, requested_provider_id TEXT, subscription_id TEXT,
     payment_mode TEXT DEFAULT 'PAY_AFTER', address_id TEXT, is_instant BOOLEAN DEFAULT 0, customer_notes TEXT,
     accepted_at TIMESTAMP, cancellation_fee INTEGER DEFAULT 0, cancel_fee_status TEXT,
-    cancel_fee_booking_id TEXT, dues_collected INTEGER DEFAULT 0,
+    cancel_fee_booking_id TEXT, dues_collected INTEGER DEFAULT 0, cancellation_reason TEXT,
+    expires_at TIMESTAMP, dispatch_attempts INTEGER NOT NULL DEFAULT 0, last_dispatched_at TIMESTAMP,
+    dispatch_radius_km INTEGER, ends_at TIMESTAMP,
     updated_at TIMESTAMP, created_at TIMESTAMP
+);
+CREATE TABLE booking_items (
+    item_id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id TEXT, sub_service_id TEXT,
+    name_snapshot TEXT, price_snapshot INTEGER, quantity INTEGER DEFAULT 1
+);
+CREATE TABLE instant_bookings (
+    instant_id TEXT PRIMARY KEY, booking_id TEXT UNIQUE, requested_at TIMESTAMP,
+    dispatched_at TIMESTAMP, provider_assigned_at TIMESTAMP, sla_minutes INTEGER DEFAULT 60,
+    surge_applied BOOLEAN DEFAULT 0, surge_pct INTEGER DEFAULT 0, status TEXT DEFAULT 'DISPATCHING',
+    expired_at TIMESTAMP
 );
 CREATE TABLE payments (
     payment_id TEXT PRIMARY KEY, booking_id TEXT, customer_id TEXT, razorpay_order_id TEXT UNIQUE,

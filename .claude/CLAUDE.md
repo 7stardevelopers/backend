@@ -41,7 +41,7 @@ Copy `.env` to the project root with all required vars (see Key env vars below).
 ## Architecture
 
 ### Single-Lambda design
-Everything runs in one AWS Lambda (`lambda_function.handler`). REST vs WebSocket is distinguished by checking `event.requestContext.connectionId`. A second Lambda (`location_trigger.handler`) fires on a 15-minute EventBridge schedule to send pre-booking push notifications.
+Everything runs in one AWS Lambda (`lambda_function.handler`). REST vs WebSocket is distinguished by checking `event.requestContext.connectionId`. A second Lambda (`location_trigger.handler`) fires on a 15-minute EventBridge schedule to send pre-booking push notifications; a third (`dispatch_trigger.handler`, every minute) re-offers open bookings and expires unaccepted ones.
 
 ### Request flow (REST)
 ```
@@ -118,6 +118,15 @@ Every completion path calls `PaymentService.settle_completed_booking`: online-pa
 
 ### Booking pricing
 All amounts are computed server-side in `bookings/booking_pricing.py` from `services.base_price` / `sub_services.price`; client `sub_total`/`discount`/`total_amount` are ignored. Coupon, subscription quota and coins are applied (and reserved atomically) inside booking creation.
+
+### Instant vs scheduled bookings (`bookings/dispatch_rules.py`, `bookings/dispatch.py`, `migrations/008_instant_and_scheduling.sql`)
+`POST /bookings` takes `booking_type: SCHEDULED | INSTANT` (older apps: `is_instant`); `POST /instant-bookings` is the same call with INSTANT. Both share pricing, coupons, payment mode and address pinning. Nobody is ever assigned without accepting.
+- **SCHEDULED**: `scheduled_at` must be ≥ `MIN_LEAD_MIN` (60) ahead, ≤ `MAX_ADVANCE_DAYS` (14), and start 07:00–21:00 IST (`validate_slot`). `GET /services/{id}/slots?date=&lat=&lng=` (public) lists the day's 30-min slots plus whether Now is open (`instant_available`, `instant_reason`, `workers_nearby`). Offered within 20 km at booking, again 24 h / 3 h / 1 h before (the 1 h round also pushes the customer "still looking"); `expires_at` = slot − 30 min.
+- **INSTANT**: only if `services.instant_available` and instant hours are open; `scheduled_at` = now. Offered in rings 5 → 8 → 12 km (0 / 2 / 5 min, new ring only), push `type: instant_job`; `expires_at` = first offer + 10 min (Pay now: the clock starts once paid). No surge.
+- `dispatch.start` (from `BookingsService.dispatch`) runs the first round; `dispatch.tick_one` runs the next round or expiry — on every customer `GET /bookings/{id}` / `GET /instant-bookings/{id}` of a PENDING booking and every minute from `dispatch_trigger.py` (`DispatchTriggerFunction`, `rate(1 minute)`). Rounds are claimed by a conditional update on `dispatch_attempts`.
+- Expiry: `_do_cancel(reason="NO_EXPERT", notify=False)` (refund + coupon/coins/quota back), `instant_bookings.status=EXPIRED`, push `type: booking_expired`. `claim_booking` refuses past `expires_at`.
+- Clashes: a worker can't accept (and isn't offered / doesn't see in the feed) a job overlapping one of theirs — `[scheduled_at, ends_at]` + 30 min travel; `ends_at` = start + item `duration_minutes` (default 60). Instant also needs the worker not to be EN_ROUTE / IN_PROGRESS elsewhere.
+- Cancel fee: a scheduled booking stays free until 2 h before its slot (on top of the 5-min grace).
 
 ### Booking status machine
 ```

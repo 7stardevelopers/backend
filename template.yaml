@@ -211,6 +211,31 @@ Resources:
         - AWSSecretsManagerGetSecretValuePolicy:
             SecretArn: !Sub "arn:aws:secretsmanager:ap-south-1:${AWS::AccountId}:secret:${SecretName}*"
 
+  DispatchTriggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "7starexperts-dispatch-trigger-${Environment}"
+      Handler: dispatch_trigger.handler
+      CodeUri: .
+      Description: Re-offers open bookings to workers and cancels those nobody accepted in time
+      VpcConfig: !If
+        - HasVpc
+        - SecurityGroupIds:
+            - !Ref VpcSecurityGroupId
+          SubnetIds:
+            - !Ref VpcSubnetId1
+            - !Ref VpcSubnetId2
+        - !Ref AWS::NoValue
+      Events:
+        ScheduleRule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Enabled: true
+      Policies:
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Sub "arn:aws:secretsmanager:ap-south-1:${AWS::AccountId}:secret:${SecretName}*"
+
 Outputs:
   ApiUrl:
     Description: API Gateway endpoint URL
