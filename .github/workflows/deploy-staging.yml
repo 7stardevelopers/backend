@@ -11,7 +11,7 @@ on:
       branch:
         description: "Select the branch to deploy to staging"
         required: true
-        default: test_backend
+        default: new_oct
         type: choice
         options:
           - main
