@@ -2,21 +2,8 @@ name: Deploy to Staging
 
 on:
   push:
-    branches:
-      - main
-      - test_backend
-
+    branches: [ main, test_backend ]
   workflow_dispatch:
-    inputs:
-      branch:
-        description: "Select the branch to deploy to staging"
-        required: true
-        default: test_backend
-        type: choice
-        options:
-          - main
-          - test_backend
-          - new_oct
 
 permissions:
   id-token: write
@@ -24,43 +11,32 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy to AWS Staging
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout the selected branch for manual runs.
-      #    For automatic runs, checkout the branch that triggered the workflow.
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.branch || github.ref_name }}
 
-      # 2. Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # 3. Install AWS SAM CLI
       - name: Install SAM CLI
         uses: aws-actions/setup-sam@v2
 
-      # 4. Configure AWS credentials using GitHub OIDC
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      # 5. Build the application using the staging configuration
       - name: SAM Build
         run: sam build --config-env staging
 
-      # 6. Deploy to AWS staging
       - name: SAM Deploy
         run: sam deploy --config-env staging --no-fail-on-empty-changeset
 
-      # 7. Display CloudFormation failure events if deployment fails
       - name: Print stack failure events
         if: failure()
         run: |
@@ -69,7 +45,6 @@ jobs:
             --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED'].{Resource:LogicalResourceId,Reason:ResourceStatusReason}" \
             --output table
 
-      # 8. Print the deployed API URL
       - name: Print API URL
         run: |
           aws cloudformation describe-stacks \
