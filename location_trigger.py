@@ -44,6 +44,8 @@ def _process_upcoming_bookings(conn):
         FROM bookings b
         LEFT JOIN providers p ON p.provider_id = b.provider_id
         WHERE b.status = 'ACCEPTED'
+          -- instant jobs start at once; their accept push already says the expert is coming
+          AND COALESCE(b.is_instant, FALSE) = FALSE
           AND b.scheduled_at BETWEEN NOW() AND NOW() + INTERVAL 75 MINUTE
           AND JSON_EXTRACT(b.service_snapshot, '$.location_triggered') IS NULL
     """)).mappings().fetchall()

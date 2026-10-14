@@ -8,6 +8,8 @@ from bookings.bookings_validator import (
     CreateBookingSchema, UpdateStatusSchema, VerifyDoorOTPSchema, AddTipSchema
 )
 from bookings.booking_pricing import price_booking, apply_booking_side_effects, release_booking_side_effects
+from bookings import dispatch as dispatch_rounds
+from bookings import dispatch_rules
 from notifications.notifications_service import NotificationsService
 from payments.payment_service import platform_fee_for
 from payments.money_rules import CANCEL_FEE, CANCEL_GRACE_MIN, CASH_DUES_LIMIT
@@ -80,6 +82,12 @@ class BookingsService:
             raise PermissionError("Only customers can create bookings")
 
         validated = CreateBookingSchema(**obj)
+        if validated.is_instant:
+            _check_instant_allowed(connection, validated.service_id)
+            scheduled_at = now_utc().replace(tzinfo=None)  # stored as naive UTC
+        else:
+            dispatch_rules.validate_slot(validated.scheduled_at)
+            scheduled_at = validated.scheduled_at
         pricing = price_booking(
             connection, user_id, validated.service_id,
             items=validated.items, coupon_id=validated.coupon_id, coins_used=validated.coins_used,
@@ -90,7 +98,12 @@ class BookingsService:
         booking_data = {
             "customer_id": user_id,
             "service_id": validated.service_id,
-            "scheduled_at": validated.scheduled_at,
+            "scheduled_at": scheduled_at,
+            "ends_at": scheduled_at + timedelta(minutes=_job_minutes(connection, pricing["items"])),
+            # Scheduled: nobody accepting by shortly before the slot cancels it. Instant:
+            # the clock starts when it is offered (dispatch.start) — after payment for "Pay now".
+            "expires_at": None if validated.is_instant else
+                          scheduled_at - timedelta(minutes=dispatch_rules.EXPIRE_BEFORE_MIN),
             "address_id": validated.address_id,
             "address_snapshot": address_snapshot,
             "service_snapshot": validated.service_snapshot,
@@ -116,6 +129,9 @@ class BookingsService:
         apply_booking_side_effects(connection, user_id, booking["booking_id"], pricing)
         if pricing["items"]:
             self.modal.create_items(connection, booking["booking_id"], pricing["items"])
+        if validated.is_instant:
+            from instant_bookings.instant_bookings_modal import InstantBookingsMaster
+            booking["instant"] = InstantBookingsMaster().create(connection, booking["booking_id"])
 
         # "Pay after job" goes to workers right away; "Pay now" waits until the
         # payment is confirmed (PaymentService.confirm_payment calls dispatch()).
@@ -149,7 +165,9 @@ class BookingsService:
                         .where(ps_t.c.provider_id == booking.get("requested_provider_id"))
                         .where(ps_t.c.service_id == booking["service_id"])
                     ).fetchone()
-                    if offers_service:
+                    # Not if it clashes with the expert's other jobs — then it's offered to everyone.
+                    if offers_service and not dispatch_rounds.clashing_job(
+                            booking, dispatch_rounds.provider_open_jobs(connection, prov["provider_id"], booking["booking_id"])):
                         direct_assigned = self.modal.claim_booking(
                             connection, booking["booking_id"], booking.get("requested_provider_id")
                         )
@@ -165,44 +183,20 @@ class BookingsService:
             except Exception as e:
                 print(f"[Rebook] Direct-assign failed (non-fatal, falling back to broadcast): {e}")
 
-        # Notify nearby available providers — booking stays PENDING, first to accept gets it
-        # (skipped if the requested provider was already directly assigned above)
+        # Offer to nearby available workers — booking stays PENDING, first to accept
+        # gets it. Instant widens the radius in rounds (dispatch.tick_one); both kinds
+        # are cancelled if nobody accepts in time.
         if not direct_assigned:
-            try:
-                from providers.provider_matching import haversine
-                addr = booking.get("address_snapshot") or {}
-                if isinstance(addr, str):  # re-read from the DB (verify_payment path)
-                    addr = json.loads(addr)
-                b_lat = addr.get("lat")
-                b_lng = addr.get("lng")
-                candidates = ProvidersMaster().get_available_for_service(connection, booking["service_id"])
-                nearby_user_ids = []
-                for p in candidates:
-                    p_lat = p.get("last_lat")
-                    p_lng = p.get("last_lng")
-                    if p_lat and p_lng and b_lat and b_lng:
-                        if haversine(float(b_lat), float(b_lng), float(p_lat), float(p_lng)) <= 20:
-                            nearby_user_ids.append(p["user_id"])
-                    else:
-                        nearby_user_ids.append(p["user_id"])
-                if nearby_user_ids:
-                    self.notif.send_push(
-                        connection=connection,
-                        user_ids=nearby_user_ids,
-                        title="New Job Near You",
-                        body=_job_push_body(booking),
-                        data={"type": "job_available", "booking_id": booking["booking_id"],
-                              "scheduled_at": _iso_utc(booking.get("scheduled_at"))},
-                    )
-            except Exception as e:
-                print(f"[Notify] nearby push failed (non-fatal): {e}")
+            booking = dispatch_rounds.start(connection, booking, self.notif)
 
         self.notif.send_push(
             connection=connection,
             user_ids=[booking["customer_id"]],
-            title="Booking confirmed!",
-            body="We're finding the best expert for you.",
-            data={"type": "booking_confirmed", "booking_id": booking["booking_id"]},
+            title="⚡ Finding an expert near you" if booking.get("is_instant") else "Booking confirmed!",
+            body=(f"Usually at your door in about {dispatch_rules.INSTANT_ETA_MIN} min. We'll tell you who's coming."
+                  if booking.get("is_instant") else "We're finding the best expert for you."),
+            data={"type": "instant_booking_confirmed" if booking.get("is_instant") else "booking_confirmed",
+                  "booking_id": booking["booking_id"]},
         )
         return booking
 
@@ -260,6 +254,10 @@ class BookingsService:
                 is_provider = True
             if not is_customer and not is_provider:
                 raise PermissionError("Access denied")
+        if booking.get("status") == "PENDING":
+            # The customer's "Finding an expert" screen polls this — run the next
+            # search round / expiry on time (also run every minute by dispatch_trigger).
+            booking = dispatch_rounds.tick_one(connection, booking, self.notif)
         booking = self._ensure_pinned(connection, booking)
         booking["items"] = self.modal.get_items(connection, booking_id)
         if booking.get("provider_id"):
@@ -448,6 +446,8 @@ class BookingsService:
                 lng = float(loc["lng"])
 
         bookings = self.modal.get_available_for_provider(connection, provider["provider_id"], lat, lng)
+        mine = dispatch_rounds.provider_open_jobs(connection, provider["provider_id"])
+        bookings = [b for b in bookings if not dispatch_rounds.clashing_job(b, mine)]
         for b in bookings:
             self._hide_door_otp(b, role)
         return "success", bookings
@@ -469,15 +469,27 @@ class BookingsService:
         target = self.modal.read_one(connection, booking_id)
         if target and str(target.get("customer_id")) == str(user_id):
             raise PermissionError("You can't accept your own booking")
+        if target and target.get("status") == "PENDING":
+            clash = dispatch_rounds.clashing_job(
+                target, dispatch_rounds.provider_open_jobs(connection, provider["provider_id"], booking_id))
+            if clash:
+                if target.get("is_instant") and clash["status"] in dispatch_rounds.LIVE_STATUSES:
+                    raise ValueError("Finish your current job before taking an instant job")
+                raise ValueError(f"You already have a job at {_job_when(clash.get('scheduled_at'))} "
+                                 "that overlaps this one")
         claimed = self.modal.claim_booking(connection, booking_id, provider["provider_id"])
         if not claimed:
             raise ValueError("Booking is no longer available — another provider may have accepted it")
         booking = self.modal.read_one(connection, booking_id)
+        if booking.get("is_instant"):
+            from instant_bookings.instant_bookings_modal import InstantBookingsMaster
+            InstantBookingsMaster().mark_assigned(connection, booking_id)
         self.notif.send_push(
             connection=connection,
             user_ids=[booking["customer_id"]],
-            title="Expert on the way!",
-            body="Your booking has been accepted. The expert is on the way.",
+            title="Expert on the way!" if booking.get("is_instant") else "Booking accepted!",
+            body=("Your expert accepted and is heading to you." if booking.get("is_instant")
+                  else f"Your expert will arrive {_job_when(booking.get('scheduled_at'))}."),
             data={"type": "booking_accepted", "booking_id": booking_id},
         )
         self._hide_door_otp(booking, role)
@@ -648,13 +660,17 @@ class BookingsService:
         updated["cancellation_fee"] = fee
         return "success", updated
 
-    def _do_cancel(self, connection, booking, fee: int = 0, only_unpaid=False):
+    def _do_cancel(self, connection, booking, fee: int = 0, only_unpaid=False, reason=None, notify=True):
         booking_id = booking["booking_id"]
         updated = self.modal.update_status(
             connection, booking_id, "CANCELLED", expected_status=booking["status"], only_unpaid=only_unpaid
         )
+        if reason:
+            self.modal.set_cancellation_reason(connection, booking_id, reason)
+            updated["cancellation_reason"] = reason
         release_booking_side_effects(connection, booking)
-        self._notify_status_change(connection, updated, "CANCELLED")
+        if notify:
+            self._notify_status_change(connection, updated, "CANCELLED")
         if booking.get("provider_id"):
             try:
                 prov = ProvidersMaster().find_by_id(connection, booking["provider_id"])
@@ -836,21 +852,33 @@ def _as_utc(ts):
     return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
 
 
-def cancel_free_until(booking):
-    """ISO time until which the customer may cancel for free (None = no grace clock running)."""
+def _free_until(booking):
+    """Aware UTC time until which a customer cancel is free, or None (no grace clock).
+    Free for CANCEL_GRACE_MIN after a worker accepts; a scheduled booking also stays
+    free until FREE_CANCEL_BEFORE_H before its slot."""
     accepted = _as_utc(booking.get("accepted_at"))
     if booking.get("status") != "ACCEPTED" or not accepted:
         return None
-    return (accepted + timedelta(minutes=CANCEL_GRACE_MIN)).isoformat().replace("+00:00", "Z")
+    until = accepted + timedelta(minutes=CANCEL_GRACE_MIN)
+    scheduled = _as_utc(booking.get("scheduled_at"))
+    if scheduled is not None and not booking.get("is_instant"):
+        until = max(until, scheduled - timedelta(hours=dispatch_rules.FREE_CANCEL_BEFORE_H))
+    return until
+
+
+def cancel_free_until(booking):
+    """ISO time until which the customer may cancel for free (None = no grace clock running)."""
+    until = _free_until(booking)
+    return until.isoformat().replace("+00:00", "Z") if until else None
 
 
 def cancellation_fee_for(booking) -> int:
     """Fee for the customer cancelling now: free while an expert is being found
     and for CANCEL_GRACE_MIN after one accepts, then CANCEL_FEE."""
-    accepted = _as_utc(booking.get("accepted_at"))
-    if booking.get("status") != "ACCEPTED" or not accepted or not booking.get("provider_id"):
+    until = _free_until(booking)
+    if until is None or not booking.get("provider_id"):
         return 0
-    if datetime.now(timezone.utc) - accepted <= timedelta(minutes=CANCEL_GRACE_MIN):
+    if datetime.now(timezone.utc) <= until:
         return 0
     return CANCEL_FEE
 
@@ -949,6 +977,33 @@ def _pinned_snapshot(connection, user_id, address_id, snapshot):
         snap.pop("lat", None)
         snap.pop("lng", None)
     return snap or snapshot
+
+
+def _check_instant_allowed(connection, service_id):
+    services_t = get_table("services")
+    service = connection.execute(
+        services_t.select().where(services_t.c.service_id == service_id)
+    ).mappings().fetchone()
+    if not service or not service["is_active"]:
+        raise ValueError("Service not available")
+    if not service.get("instant_available"):
+        raise ValueError("Instant booking isn't available for this service. Please schedule a time.")
+    if not dispatch_rules.instant_open():
+        raise ValueError(dispatch_rules.instant_closed_message())
+
+
+def _job_minutes(connection, items) -> int:
+    """How long the job takes: its items' durations, else DEFAULT_JOB_MIN."""
+    ids = [i["sub_service_id"] for i in items or [] if i.get("sub_service_id")]
+    if not ids:
+        return dispatch_rules.DEFAULT_JOB_MIN
+    t = get_table("sub_services")
+    if "duration_minutes" not in t.c:
+        return dispatch_rules.DEFAULT_JOB_MIN
+    durations = {r.sub_service_id: r.duration_minutes for r in connection.execute(
+        t.select().where(t.c.sub_service_id.in_(ids))).fetchall()}
+    total = sum(int(durations.get(i["sub_service_id"]) or 0) * int(i.get("quantity") or 1) for i in items)
+    return max(30, min(total, 8 * 60)) if total else dispatch_rules.DEFAULT_JOB_MIN
 
 
 def is_dispatchable(booking) -> bool:

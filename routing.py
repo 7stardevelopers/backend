@@ -73,6 +73,7 @@ ROUTES = [
     ("GET",  "/services/search",            _svcs.search,                []),
     ("GET",  "/services",                   _svcs.list_services,         []),
     ("GET",  r"/services/(?P<id>[^/]+)",    _svcs.get_detail,            ["id"]),
+    ("GET",  r"/services/(?P<id>[^/]+)/slots", _svcs.slots,              ["id"]),
 
     # BOOKINGS
     ("POST", "/bookings",                   _books.create,               []),
@@ -248,6 +249,7 @@ PUBLIC_ROUTES = {
     ("GET",  "/services/search"),
     ("GET",  "/services"),
     ("GET",  r"/services/(?P<id>[^/]+)"),
+    ("GET",  r"/services/(?P<id>[^/]+)/slots"),
     ("GET",  "/coupons"),
     ("GET",  "/subscriptions/plans"),
     ("GET",  r"/reviews/service/(?P<id>[^/]+)"),

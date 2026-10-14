@@ -1,6 +1,7 @@
 """Rapido-style worker money: fee on cash jobs (dues + job block), late-cancel
 fee carried to the next booking, and the twice-weekly payout batch. Paise."""
 import unittest
+from bookings.dispatch_rules import next_open_slot
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
@@ -113,7 +114,7 @@ class CancelFeeTests(WorkerMoneyBase):
     def new_booking(self):
         return self.books.create({
             "_user_id": "cust", "_role": "CUSTOMER", "service_id": "s1",
-            "scheduled_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+            "scheduled_at": next_open_slot().isoformat(),  # inside working hours
         }, self.conn)[1]
 
     def test_free_within_grace(self):

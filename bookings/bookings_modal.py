@@ -15,6 +15,16 @@ def _haversine_km(lat1, lng1, lat2, lng2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+def _aware(ts):
+    """Aware UTC datetime from a DB value (naive UTC or ISO string), None if empty."""
+    from datetime import datetime, timezone
+    if ts is None:
+        return None
+    if isinstance(ts, str):
+        ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+
+
 class BookingsMaster:
     @property
     def t(self):
@@ -252,7 +262,12 @@ class BookingsMaster:
             ORDER BY b.scheduled_at ASC
             LIMIT 50
         """), {"pid": provider_id})
+        now = now_utc()
         bookings = [dict(r._mapping) for r in rows.fetchall()]
+        # Past its search deadline (about to be cancelled as "no expert") — not offered.
+        bookings = [b for b in bookings if not b.get("expires_at") or _aware(b["expires_at"]) > now]
+        # Instant ("Now") requests first, then by time.
+        bookings.sort(key=lambda b: (not b.get("is_instant"), _aware(b.get("scheduled_at")) or now))
 
         if lat is None or lng is None:
             # No worker coords — strip internal fields and return all
@@ -269,7 +284,8 @@ class BookingsMaster:
             except (TypeError, ValueError):
                 # No usable location data anywhere — skip, can't verify proximity
                 continue
-            if _haversine_km(lat, lng, b_lat, b_lng) <= 20:
+            # Instant searches start small and widen (dispatch_radius_km); scheduled use 20 km.
+            if _haversine_km(lat, lng, b_lat, b_lng) <= (b.get("dispatch_radius_km") or 20):
                 result.append(b)
         return result[:20]
 
@@ -337,12 +353,14 @@ class BookingsMaster:
         return bookings
 
     def claim_booking(self, conn, booking_id: str, provider_id: str) -> bool:
-        """Atomically assign provider only if still unassigned. Returns True if claimed."""
+        """Atomically assign provider only if still unassigned and not past its
+        search deadline (bookings/dispatch.py). Returns True if claimed."""
         result = conn.execute(
             self.t.update()
             .where(self.t.c.booking_id == booking_id)
             .where(self.t.c.status == "PENDING")
             .where(self.t.c.provider_id == None)
+            .where(or_(self.t.c.expires_at.is_(None), self.t.c.expires_at > now_utc().replace(tzinfo=None)))
             .where(or_(self.t.c.payment_mode != "PAY_NOW",
                        self.t.c.payment_status == "PAID", self.t.c.total_amount == 0))
             .values(provider_id=provider_id, status="ACCEPTED", accepted_at=now_utc(), updated_at=now_utc())
@@ -353,6 +371,10 @@ class BookingsMaster:
     # A late cancel leaves the fee on the cancelled booking (DUE). The customer's
     # next booking carries it in its total (COLLECTING, cancel_fee_booking_id =
     # that booking) and it is COLLECTED — paid to the worker — once that job is done.
+
+    def set_cancellation_reason(self, conn, booking_id: str, reason: str):
+        conn.execute(self.t.update().where(self.t.c.booking_id == booking_id)
+                     .values(cancellation_reason=reason, updated_at=now_utc()))
 
     def set_cancel_fee(self, conn, booking_id: str, fee: int, status: str):
         conn.execute(self.t.update().where(self.t.c.booking_id == booking_id)

@@ -96,6 +96,8 @@ class AdminService:
         data = UpdateServiceSchema(**obj)
         fields = {k: v for k, v in data.model_dump().items() if v is not None}
         ServicesMaster().update_service(connection, service_id, fields)
+        from services_catalog.services_service import _bust_service_cache
+        _bust_service_cache()  # e.g. "Instant available" must reach the apps now, not in 10 min
         return "success", {"message": "Service updated"}
 
     def delete_service(self, obj, connection):
@@ -133,7 +135,10 @@ class AdminService:
         status   = obj.get("status")
         page     = int(obj.get("page", 1))
         per_page = int(obj.get("per_page", 20))
-        return "success", self.modal.list_bookings_detailed(connection, status, page, per_page)
+        btype    = (obj.get("type") or "").upper() or None
+        if btype not in (None, "INSTANT", "SCHEDULED"):
+            raise ValueError("type must be INSTANT or SCHEDULED")
+        return "success", self.modal.list_bookings_detailed(connection, status, page, per_page, btype)
 
     def list_users_detailed(self, obj, connection):
         self._require_admin(obj.pop("_role", None))

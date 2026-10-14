@@ -1,22 +1,36 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Literal
 from datetime import datetime, timezone
 
 
 class CreateBookingSchema(BaseModel):
     service_id: str = Field(..., min_length=1)
-    scheduled_at: datetime
+    # INSTANT ("Now"): scheduled_at is ignored and set to the booking time.
+    # SCHEDULED: scheduled_at is required (slot rules in bookings/dispatch_rules.py).
+    # Older apps send is_instant instead; is_instant=true means INSTANT.
+    booking_type: Optional[Literal["SCHEDULED", "INSTANT"]] = None
+    scheduled_at: Optional[datetime] = None
     address_id: Optional[str] = None
 
-    @field_validator("scheduled_at")
-    @classmethod
-    def must_be_future(cls, v):
+    @model_validator(mode="after")
+    def resolve_type_and_time(self):
+        if self.booking_type is None:
+            self.booking_type = "INSTANT" if self.is_instant else "SCHEDULED"
+        self.is_instant = self.booking_type == "INSTANT"
+        if self.is_instant:
+            self.scheduled_at = None
+            return self
+        if self.scheduled_at is None:
+            raise ValueError("scheduled_at is required for a scheduled booking")
         # Stored as naive UTC — the DB session runs in UTC, so a "+05:30" value
         # must be converted, not just have its tzinfo dropped by the driver.
+        v = self.scheduled_at
         aware = v if v.tzinfo else v.replace(tzinfo=timezone.utc)
         if aware <= datetime.now(timezone.utc):
             raise ValueError("scheduled_at must be in the future")
-        return aware.astimezone(timezone.utc).replace(tzinfo=None)
+        self.scheduled_at = aware.astimezone(timezone.utc).replace(tzinfo=None)
+        return self
+
     address_snapshot: Optional[dict] = None
     service_snapshot: Optional[dict] = None
     # Accepted for backwards compatibility but IGNORED — prices are computed
