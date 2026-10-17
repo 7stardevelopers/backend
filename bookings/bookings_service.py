@@ -480,6 +480,8 @@ class BookingsService:
         claimed = self.modal.claim_booking(connection, booking_id, provider["provider_id"])
         if not claimed:
             raise ValueError("Booking is no longer available — another provider may have accepted it")
+        # Rapido-style: the job disappears from every other worker it was offered to.
+        dispatch_rounds.withdraw_offers(connection, booking_id, self.notif, keep_user_id=user_id)
         booking = self.modal.read_one(connection, booking_id)
         if booking.get("is_instant"):
             from instant_bookings.instant_bookings_modal import InstantBookingsMaster
@@ -669,6 +671,8 @@ class BookingsService:
             self.modal.set_cancellation_reason(connection, booking_id, reason)
             updated["cancellation_reason"] = reason
         release_booking_side_effects(connection, booking)
+        if booking["status"] == "PENDING":
+            dispatch_rounds.withdraw_offers(connection, booking_id, self.notif)
         if notify:
             self._notify_status_change(connection, updated, "CANCELLED")
         if booking.get("provider_id"):

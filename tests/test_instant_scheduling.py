@@ -87,6 +87,9 @@ class DispatchTestBase(unittest.TestCase):
         push = patch("notifications.notifications_service.NotificationsService.send_push")
         self.push = push.start()
         self.addCleanup(push.stop)
+        silent = patch("notifications.notifications_service.NotificationsService.send_silent")
+        self.silent = silent.start()
+        self.addCleanup(silent.stop)
         opened = patch("bookings.dispatch_rules.instant_open", return_value=True)
         opened.start()
         self.addCleanup(opened.stop)
@@ -299,6 +302,57 @@ class ScheduledBookingTests(DispatchTestBase):
         self.assertEqual(cancellation_fee_for(far), 0)
         self.assertEqual(cancellation_fee_for(near), 5000)
         self.assertEqual(cancellation_fee_for(instant), 5000)
+
+
+class OfferWithdrawalTests(DispatchTestBase):
+    def offered_both(self):
+        """Instant booking offered to w_near, then (next ring) w_mid."""
+        b = self.create(booking_type="INSTANT")
+        dispatch.tick_one(self.conn, self.booking(b["booking_id"]),
+                          now=datetime.now(timezone.utc) + timedelta(minutes=3))
+        return b["booking_id"]
+
+    def taken(self):
+        """(user_ids, data) of each job_taken silent push."""
+        return [(c.args[1], c.args[2]) for c in self.silent.call_args_list
+                if c.args[2].get("type") == "job_taken"]
+
+    def test_offers_recorded_once_per_worker(self):
+        bid = self.offered_both()
+        dispatch.tick_one(self.conn, self.booking(bid),
+                          now=datetime.now(timezone.utc) + timedelta(minutes=6))  # 12 km ring
+        rows = self.conn.exec_driver_sql(
+            "SELECT user_id FROM booking_offers WHERE booking_id=? ORDER BY user_id", (bid,)).fetchall()
+        self.assertEqual([r[0] for r in rows], ["w_mid", "w_near"])
+        dispatch._record_offers(self.conn, bid, ["w_near"])  # repeat offer: no duplicate, no error
+        self.assertEqual(self.conn.exec_driver_sql(
+            "SELECT COUNT(*) FROM booking_offers WHERE booking_id=?", (bid,)).scalar(), 2)
+
+    def test_accept_withdraws_from_everyone_else(self):
+        bid = self.offered_both()
+        self.accept(bid, "w_near")
+        self.assertEqual(self.taken(), [(["w_mid"], {"type": "job_taken", "booking_id": bid})])
+        with self.assertRaisesRegex(ValueError, "no longer available"):
+            self.accept(bid, "w_mid")
+
+    def test_customer_cancel_while_pending_withdraws_from_all(self):
+        bid = self.offered_both()
+        self.books.cancel({"_user_id": "cust", "_role": "CUSTOMER", "id": bid}, self.conn)
+        self.assertEqual(sorted(self.taken()[0][0]), ["w_mid", "w_near"])
+
+    def test_expiry_withdraws(self):
+        bid = self.offered_both()
+        dispatch.tick_one(self.conn, self.booking(bid),
+                          now=datetime.now(timezone.utc) + timedelta(minutes=11))
+        self.assertEqual(self.booking(bid)["status"], "CANCELLED")
+        self.assertEqual(sorted(self.taken()[0][0]), ["w_mid", "w_near"])
+
+    def test_cancel_after_accept_sends_no_extra_job_taken(self):
+        bid = self.offered_both()
+        self.accept(bid, "w_near")
+        self.silent.reset_mock()
+        self.books.cancel({"_user_id": "cust", "_role": "CUSTOMER", "id": bid}, self.conn)
+        self.assertEqual(self.taken(), [])
 
 
 class SlotsApiTests(DispatchTestBase):

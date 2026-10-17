@@ -97,6 +97,9 @@ CREATE TABLE instant_bookings (
     surge_applied BOOLEAN DEFAULT 0, surge_pct INTEGER DEFAULT 0, status TEXT DEFAULT 'DISPATCHING',
     expired_at TIMESTAMP
 );
+CREATE TABLE booking_offers (
+    booking_id TEXT, user_id TEXT, offered_at TIMESTAMP, PRIMARY KEY (booking_id, user_id)
+);
 CREATE TABLE payments (
     payment_id TEXT PRIMARY KEY, booking_id TEXT, customer_id TEXT, razorpay_order_id TEXT UNIQUE,
     razorpay_payment_id TEXT UNIQUE, amount INTEGER, currency TEXT DEFAULT 'INR',

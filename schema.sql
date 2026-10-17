@@ -279,6 +279,16 @@ CREATE TABLE IF NOT EXISTS instant_bookings (
     FOREIGN KEY (booking_id) REFERENCES bookings(booking_id)
 );
 
+-- Workers offered each PENDING job (offer withdrawn from the rest once one accepts)
+CREATE TABLE IF NOT EXISTS booking_offers (
+    booking_id  CHAR(36) NOT NULL,
+    user_id     CHAR(36) NOT NULL,
+    offered_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (booking_id, user_id),
+    KEY idx_booking_offers_user (user_id),
+    FOREIGN KEY (booking_id) REFERENCES bookings(booking_id)
+);
+
 -- PAYMENTS
 CREATE TABLE IF NOT EXISTS payments (
     payment_id          CHAR(36) NOT NULL DEFAULT (UUID()),

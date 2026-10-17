@@ -96,9 +96,23 @@ def _workers_in_ring(conn, booking, inner_km, outer_km):
     return out
 
 
+def _record_offers(conn, booking_id, user_ids):
+    """Remember who was offered the job so the offer can be withdrawn later."""
+    o = get_table("booking_offers")
+    now = rules.naive_utc(_now())
+    for uid in user_ids:
+        conn.execute(o.insert().prefix_with("IGNORE", dialect="mysql")
+                     .prefix_with("OR IGNORE", dialect="sqlite")
+                     .values(booking_id=booking_id, user_id=uid, offered_at=now))
+
+
 def _push_offer(conn, notif, booking, user_ids):
     if not user_ids:
         return
+    try:
+        _record_offers(conn, booking["booking_id"], user_ids)
+    except Exception as e:
+        print(f"[Dispatch] recording offers failed (non-fatal): {e}")
     from bookings.bookings_service import _job_push_body, _iso_utc
     try:
         if booking.get("is_instant"):
@@ -118,6 +132,19 @@ def _push_offer(conn, notif, booking, user_ids):
             )
     except Exception as e:
         print(f"[Dispatch] offer push failed (non-fatal): {e}")
+
+
+def withdraw_offers(conn, booking_id, notif, keep_user_id=None):
+    """The job is gone (accepted, cancelled or expired): silently tell every other
+    worker it was offered to, so it disappears from their app right away."""
+    try:
+        o = get_table("booking_offers")
+        user_ids = [r.user_id for r in conn.execute(
+            o.select().where(o.c.booking_id == booking_id)).fetchall()
+            if str(r.user_id) != str(keep_user_id)]
+        notif.send_silent(conn, user_ids, {"type": "job_taken", "booking_id": booking_id})
+    except Exception as e:
+        print(f"[Dispatch] withdrawing offers failed (non-fatal): {e}")
 
 
 def _claim_round(conn, booking, values, now) -> bool:

@@ -104,11 +104,29 @@ class NotificationsService:
         except Exception as e:
             print(f"[Notify] Push failed (non-fatal): {e}")
 
+    def send_silent(self, connection, user_ids: list, data: dict):
+        """Data-only push (no banner, sound or in-app record) — tells the app to
+        update itself, e.g. `job_taken` removes a job another worker accepted."""
+        if not user_ids:
+            return
+        try:
+            token_rows = self.modal.get_tokens_for_users(connection, user_ids)
+            tokens = [r["token_id"] for r in token_rows if (r.get("token_id") or "").startswith("ExponentPushToken[")]
+            if tokens:
+                self._send_messages([
+                    {"to": t, "data": data, "priority": "high", "_contentAvailable": True}
+                    for t in tokens
+                ])
+        except Exception as e:
+            print(f"[Notify] Silent push failed (non-fatal): {e}")
+
     def _batch_push(self, tokens: list, title: str, body: str, data: dict):
-        messages = [
+        self._send_messages([
             {"to": t, "sound": "default", "title": title, "body": body, "data": data}
             for t in tokens
-        ]
+        ])
+
+    def _send_messages(self, messages: list):
         for i in range(0, len(messages), EXPO_BATCH_LIMIT):
             batch = messages[i:i+EXPO_BATCH_LIMIT]
             try:
